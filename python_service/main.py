@@ -18,6 +18,7 @@ from modules.evaluation_metrics import compute_quality_metrics
 from modules.landmark import detect_landmarks, draw_landmarks
 from modules.landmark_fusion import detect_landmarks_fused
 from modules.expression_transfer import transfer_expression
+from modules.makeup_service import apply_makeup
 from modules.preprocessing import (
     detect_and_crop_face,
     normalize_face,
@@ -430,6 +431,47 @@ async def frequency_pro(
             "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
             "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),
             "metrics": out["metrics"],
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+@app.post("/pro/apply-makeup")
+async def pro_apply_makeup(
+    image: UploadFile = File(...),
+    region: str = Form(...),
+    hex_color: str = Form(...),
+    intensity: float = Form(0.6),
+    landmark_backend: str = Form("hybrid"),
+    temporal_smoothing: bool = Form(False),
+    ema_alpha: float = Form(0.62),
+    stream_id: str = Form("default"),
+):
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        img = bytes_to_numpy(file_bytes)
+
+        lms, landmark_info = detect_landmarks_fused(
+            img,
+            backend=landmark_backend,
+            temporal_smoothing=temporal_smoothing,
+            ema_alpha=ema_alpha,
+            stream_id=stream_id,
+        )
+
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
+
+        out = apply_makeup(img, lms, region=region, hex_color=hex_color, intensity=intensity)
+
+        return {
+            "success": True,
+            "region": out["region"],
+            "hex_color": out["hex_color"],
+            "intensity": out["intensity"],
+            "landmark_info": landmark_info,
+            "result_image_b64": numpy_to_b64(out["result_image"]),
         }
     except Exception as exc:
         return {"error": "Face not detected or model error", "details": str(exc)}

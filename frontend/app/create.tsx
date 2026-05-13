@@ -18,6 +18,7 @@ import {
     StyleSheet,
     Switch,
     Text,
+    TextInput,
     View,
     useWindowDimensions
 } from 'react-native';
@@ -28,6 +29,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    applyMakeupFromBase64,
     estimateAgeFromBase64,
     estimateAgeFromUri,
     exportEvaluationReportFromBase64,
@@ -35,7 +37,7 @@ import {
     frequencyProFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
-  transferExpressionFromBase64,
+    transferExpressionFromBase64,
     warpFromBase64,
     warpProFromBase64,
     type ProMetrics,
@@ -73,6 +75,15 @@ type ContainLayout = {
 
 type ProOperation = ProWarpOperation | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
+type MakeupUiTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow';
+type MakeupBackendRegion = 'lip' | 'cheek' | 'brow' | 'lash';
+
+type MakeupPreset = {
+  key: MakeupUiTarget;
+  label: string;
+  backendRegion: MakeupBackendRegion;
+  defaultColor: string;
+};
 
 type EvalMetricRow = {
   metric: 'MSE' | 'PSNR' | 'SSIM';
@@ -108,6 +119,55 @@ const PRO_PRESET_LABEL: Record<ProPreset, string> = {
   natural: 'Natural',
   balanced: 'Balanced',
   strong: 'Strong',
+};
+
+const MANUAL_MAKEUP_PRESETS: MakeupPreset[] = [
+  { key: 'lip', label: 'Ruj', backendRegion: 'lip', defaultColor: '#D45A73' },
+  { key: 'cheek', label: 'Allık', backendRegion: 'cheek', defaultColor: '#F29AAF' },
+  { key: 'bronzer', label: 'Bronzer', backendRegion: 'cheek', defaultColor: '#B97A4C' },
+  { key: 'lash', label: 'Kirpik', backendRegion: 'lash', defaultColor: '#1D1D1F' },
+  { key: 'brow', label: 'Kaş', backendRegion: 'brow', defaultColor: '#5E4735' },
+];
+
+const MANUAL_MAKEUP_SWATCHES: Record<MakeupUiTarget, string[]> = {
+  lip: ['#D45A73', '#A83253', '#F18FA7', '#BE4369', '#FF7AA2'],
+  cheek: ['#F29AAF', '#F2B2A6', '#E88E7A', '#DB6F93', '#F7C1C8'],
+  bronzer: ['#B97A4C', '#9F6642', '#D09A6B', '#7F5337', '#C88557'],
+  lash: ['#1D1D1F', '#2E2E33', '#505057'],
+  brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
+};
+
+const MANUAL_MAKEUP_LABELS: Record<MakeupUiTarget, string> = {
+  lip: 'Ruj',
+  cheek: 'Allık',
+  bronzer: 'Bronzer',
+  lash: 'Kirpik',
+  brow: 'Kaş',
+};
+
+const normalizeHexColor = (value: string, fallback: string) => {
+  const cleaned = value.trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return `#${cleaned
+      .split('')
+      .map((part) => part + part)
+      .join('')}`.toUpperCase();
+  }
+
+  if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return `#${cleaned.toUpperCase()}`;
+  }
+
+  return fallback;
+};
+
+const getContrastTextColor = (hex: string) => {
+  const normalized = normalizeHexColor(hex, '#FFFFFF').replace('#', '');
+  const red = parseInt(normalized.slice(0, 2), 16);
+  const green = parseInt(normalized.slice(2, 4), 16);
+  const blue = parseInt(normalized.slice(4, 6), 16);
+  const brightness = red * 0.299 + green * 0.587 + blue * 0.114;
+  return brightness > 150 ? '#111111' : '#FFFFFF';
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -210,6 +270,12 @@ export default function CreateScreen() {
   const [proError, setProError] = useState<string | null>(null);
   const [proResultB64, setProResultB64] = useState<string | null>(null);
   const [proMetrics, setProMetrics] = useState<ProMetrics | null>(null);
+  const [makeupTarget, setMakeupTarget] = useState<MakeupUiTarget>('lip');
+  const [makeupHexColor, setMakeupHexColor] = useState(MANUAL_MAKEUP_PRESETS[0].defaultColor);
+  const [makeupIntensity, setMakeupIntensity] = useState(0.48);
+  const [makeupLoading, setMakeupLoading] = useState(false);
+  const [makeupError, setMakeupError] = useState<string | null>(null);
+  const [makeupResultB64, setMakeupResultB64] = useState<string | null>(null);
   const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
   const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
   const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
@@ -516,6 +582,8 @@ export default function CreateScreen() {
     setCropApplied(false);
     resetExpressionTransferState();
     resetAgeAnalysis();
+    setMakeupResultB64(null);
+    setMakeupError(null);
     closeCropEditor();
     void runAgeAnalysis(asset.uri, 'before', 'uri');
   };
@@ -606,6 +674,8 @@ export default function CreateScreen() {
       setSelectedImageSize({ width: result.width ?? Math.round(cropWidth), height: result.height ?? Math.round(cropHeight) });
       setCropApplied(true);
       setProcessState('selected');
+      setMakeupResultB64(null);
+      setMakeupError(null);
       setStatusMessage('Kırpma uygulandı. Görsel artık seçtiğin kadrajla hazır.');
       resetAgeAnalysis();
       closeCropEditor();
@@ -625,6 +695,8 @@ export default function CreateScreen() {
     setLandmarkB64(null);
     setLandmarkCount(null);
     setWarpResultB64(null);
+    setMakeupResultB64(null);
+    setMakeupError(null);
     resetExpressionTransferState();
     setAgingResultB64(null);
     setProResultB64(null);
@@ -805,6 +877,37 @@ export default function CreateScreen() {
     }
   };
 
+  const applyMakeup = async () => {
+    if (!preprocessedB64) return;
+
+    const preset = MANUAL_MAKEUP_PRESETS.find((item) => item.key === makeupTarget) ?? MANUAL_MAKEUP_PRESETS[0];
+    const hexColor = normalizeHexColor(makeupHexColor, preset.defaultColor);
+
+    setMakeupLoading(true);
+    setMakeupError(null);
+
+    try {
+      const data = await applyMakeupFromBase64(preprocessedB64, preset.backendRegion, hexColor, makeupIntensity, {
+        landmarkBackend: 'hybrid',
+        temporalSmoothing: true,
+        emaAlpha: 0.62,
+        streamId: 'makeup-ui',
+      });
+
+      if (!data.success) {
+        throw new Error(data.message ?? 'Makeup effect failed');
+      }
+
+      setMakeupResultB64(data.result_image_b64);
+      setAgeAfter(null);
+      void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
+    } catch (error: any) {
+      setMakeupError(error?.message ?? 'Unknown makeup error');
+    } finally {
+      setMakeupLoading(false);
+    }
+  };
+
   const applyProPreset = (preset: ProPreset) => {
     const values = PRO_PRESET_VALUES[preset];
     setProPreset(preset);
@@ -925,7 +1028,7 @@ export default function CreateScreen() {
       <View style={styles.compareHeaderRow}>
         <View style={{ flex: 1 }}>
           <ThemedText type="defaultSemiBold">AI Expression Transfer</ThemedText>
-          <ThemedText style={styles.helperText}>Reference expression -> target face</ThemedText>
+          <ThemedText style={styles.helperText}>Reference expression to target face</ThemedText>
         </View>
         <View style={styles.compareHintPill}>
           <ThemedText style={styles.compareHintText}>AI vs Manual Lip Warp</ThemedText>
@@ -1405,6 +1508,159 @@ export default function CreateScreen() {
             ) : null}
 
             {proResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
+
+            {/* Section 6: Manual Makeup */}
+            <ThemedText type="defaultSemiBold">6. Manual Makeup</ThemedText>
+            <ThemedText style={styles.helperText}>
+              Bölge seç, HEX renk gir ve yoğunluğu ayarla. Uygula ile seçili bölgeyi landmark tabanlı renklendirir.
+            </ThemedText>
+
+            <View style={styles.warpGrid}>
+              {MANUAL_MAKEUP_PRESETS.map((preset) => {
+                const isActive = makeupTarget === preset.key;
+                return (
+                  <Pressable
+                    key={preset.key}
+                    style={[
+                      styles.warpOpButton,
+                      {
+                        backgroundColor: isActive ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                        opacity: preprocessedB64 ? 1 : 0.4,
+                      },
+                    ]}
+                    onPress={() => {
+                      setMakeupTarget(preset.key);
+                      setMakeupHexColor(preset.defaultColor);
+                    }}
+                    disabled={!preprocessedB64}>
+                    <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
+                      {preset.label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.makeupColorRow}>
+              <View style={styles.makeupColorPreview}>
+                <View
+                  style={[
+                    styles.makeupColorSwatch,
+                    {
+                      backgroundColor: normalizeHexColor(
+                        makeupHexColor,
+                        MANUAL_MAKEUP_PRESETS.find((item) => item.key === makeupTarget)?.defaultColor ?? '#FFFFFF'
+                      ),
+                    },
+                  ]}
+                />
+              </View>
+              <TextInput
+                value={makeupHexColor}
+                onChangeText={setMakeupHexColor}
+                placeholder="#D45A73"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={7}
+                style={[
+                  styles.makeupHexInput,
+                  {
+                    borderColor: normalizeHexColor(
+                      makeupHexColor,
+                      MANUAL_MAKEUP_PRESETS.find((item) => item.key === makeupTarget)?.defaultColor ?? '#FFFFFF'
+                    ),
+                    color: colors.text,
+                  },
+                ]}
+                editable={!!preprocessedB64}
+              />
+            </View>
+
+            <View style={styles.makeupSwatchGrid}>
+              {(MANUAL_MAKEUP_SWATCHES[makeupTarget] ?? []).map((swatch) => {
+                const isSelected = normalizeHexColor(makeupHexColor, swatch) === swatch.toUpperCase();
+                return (
+                  <Pressable
+                    key={swatch}
+                    style={[
+                      styles.makeupSwatch,
+                      {
+                        backgroundColor: swatch,
+                        borderColor: isSelected ? Colors[colorScheme].tint : 'rgba(120,120,120,0.2)',
+                      },
+                    ]}
+                    onPress={() => setMakeupHexColor(swatch)}
+                    disabled={!preprocessedB64}>
+                    <ThemedText style={[styles.makeupSwatchLabel, { color: getContrastTextColor(swatch) }]}>
+                      {swatch}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ThemedText style={styles.helperText}>Intensity: {Math.round(makeupIntensity * 100)}%</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={0}
+              maximumValue={1}
+              step={0.01}
+              value={makeupIntensity}
+              onValueChange={setMakeupIntensity}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.5 }]}
+              onPress={applyMakeup}
+              disabled={!preprocessedB64 || makeupLoading}>
+              <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Uygula</ThemedText>
+            </Pressable>
+
+            {makeupLoading ? <ActivityIndicator /> : null}
+            {makeupError ? <Text style={styles.errorText}>{makeupError}</Text> : null}
+
+            {makeupResultB64 && preprocessedB64 ? (
+              <View style={styles.compareCard}>
+                <View style={styles.compareHeaderRow}>
+                  <ThemedText style={styles.sideLabel}>Makeup Sonuç</ThemedText>
+                  <View style={styles.compareHintPill}>
+                    <ThemedText style={styles.compareHintText}>Basılı tut: Orijinal</ThemedText>
+                  </View>
+                </View>
+
+                <Pressable style={styles.compareStage} onPress={() => setLightboxUri(`data:image/png;base64,${makeupResultB64}`)}>
+                  <Image source={{ uri: `data:image/png;base64,${makeupResultB64}` }} style={styles.compareImage} contentFit="contain" />
+
+                  {preprocessedB64 ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.compareOverlay,
+                        {
+                          opacity: proCompareOpacity,
+                        },
+                      ]}>
+                      <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.compareImage} contentFit="contain" />
+                      <View style={styles.originalTag}>
+                        <ThemedText style={styles.originalTagText}>Original</ThemedText>
+                      </View>
+                    </Animated.View>
+                  ) : null}
+
+                  <Pressable
+                    style={styles.compareFab}
+                    onPressIn={() => setProCompareHeld(true)}
+                    onPressOut={() => setProCompareHeld(false)}
+                    onPress={() => null}>
+                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
+                  </Pressable>
+                </Pressable>
+              </View>
+            ) : null}
 
             {evalMetrics ? (
               <View style={styles.metricsCard}>
@@ -1934,6 +2190,57 @@ const styles = StyleSheet.create({
   nativeSlider: {
     width: '100%',
     height: 38,
+  },
+  makeupColorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  makeupColorPreview: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(120,120,120,0.08)',
+  },
+  makeupColorSwatch: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.45)',
+  },
+  makeupHexInput: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    backgroundColor: 'rgba(120,120,120,0.08)',
+  },
+  makeupSwatchGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  makeupSwatch: {
+    minWidth: 86,
+    minHeight: 38,
+    borderRadius: 12,
+    borderWidth: 2,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  makeupSwatchLabel: {
+    fontSize: 11,
+    fontWeight: '800',
   },
   sideBySide: {
     flexDirection: 'row',

@@ -296,6 +296,32 @@ export async function frequencyProFromBase64(
   return requestJson('/api/frequency/pro', formData);
 }
 
+export type MakeupRegion = 'lip' | 'cheek' | 'brow' | 'lash';
+
+export async function applyMakeupFromBase64(
+  imageBase64: string,
+  region: MakeupRegion,
+  hexColor: string,
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+    temporalSmoothing?: boolean;
+    emaAlpha?: number;
+    streamId?: string;
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('region', region);
+  formData.append('hex_color', hexColor);
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  formData.append('temporal_smoothing', String(options?.temporalSmoothing ?? false));
+  formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
+  formData.append('stream_id', options?.streamId ?? 'default');
+  return requestJson('/api/pro/apply-makeup', formData);
+}
+
 export async function exportCsvReportFromBase64(params: {
   originalImageBase64: string;
   resultImageBase64: string;
