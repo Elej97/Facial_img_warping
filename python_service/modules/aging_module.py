@@ -235,7 +235,6 @@ def _apply_facial_sagging(image_np: np.ndarray, landmarks: list[tuple[int, int]]
     return _apply_flow_warp(image_np, flow_x, flow_y)
 
 
-
 def _fft_spectrum(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     f = np.fft.fft2(gray.astype(np.float32))
     fshift = np.fft.fftshift(f)

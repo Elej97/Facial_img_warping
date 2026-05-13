@@ -127,6 +127,7 @@ app.post('/api/warp', (req, res) => proxyToPython('/warp', req, res));
 app.post('/api/warp/pro', (req, res) => proxyToPython('/warp/pro', req, res));
 app.post('/api/frequency', (req, res) => proxyToPython('/frequency', req, res));
 app.post('/api/frequency/pro', (req, res) => proxyToPython('/frequency/pro', req, res));
+app.post('/api/pro/apply-makeup', (req, res) => proxyToPython('/pro/apply-makeup', req, res));
 app.post('/api/export/csv', (req, res) => proxyBinaryToPython('/export/csv', req, res));
 app.post('/api/export/pdf', (req, res) => proxyBinaryToPython('/export/pdf', req, res));
 app.post('/api/report/export', (req, res) => proxyToPython('/report/export', req, res));
