@@ -1,10 +1,13 @@
 import Slider from '@react-native-community/slider';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
+type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
+type ProPreset = 'natural' | 'balanced' | 'strong';
+type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow';
 
 type Anchor = { idx: number; dx: number; dy: number };
 
@@ -56,6 +59,91 @@ const EFFECT_META: Record<EffectId, { label: string; icon: keyof typeof Ionicons
   lip: { label: 'Dudak Dolgun', icon: 'water-outline' },
 };
 
+const PRO_OPERATIONS: ProLiveOperation[] = [
+  'smile_enhancement',
+  'brow_lift',
+  'lip_plump',
+  'slim_face',
+  'aging',
+  'deaging',
+];
+
+const PRO_LABEL: Record<ProLiveOperation, string> = {
+  smile_enhancement: 'Pro Smile',
+  brow_lift: 'Pro Brow Lift',
+  lip_plump: 'Pro Lip Plump',
+  slim_face: 'Pro Slim Face',
+  aging: 'Pro Aging',
+  deaging: 'Pro De-Aging',
+};
+
+const PRO_ICON: Record<ProLiveOperation, keyof typeof Ionicons.glyphMap> = {
+  smile_enhancement: 'happy-outline',
+  brow_lift: 'arrow-up-outline',
+  lip_plump: 'water-outline',
+  slim_face: 'remove-outline',
+  aging: 'time-outline',
+  deaging: 'sparkles-outline',
+};
+
+const PRO_EFFECT_MAP: Partial<Record<ProLiveOperation, EffectId>> = {
+  smile_enhancement: 'smile',
+  brow_lift: 'brow',
+  lip_plump: 'lip',
+  slim_face: 'slim',
+};
+
+const PRO_PRESET_VALUES: Record<ProPreset, { intensity: number; smooth: number }> = {
+  natural: { intensity: 0.3, smooth: 4.0 },
+  balanced: { intensity: 0.6, smooth: 3.0 },
+  strong: { intensity: 0.85, smooth: 2.0 },
+};
+
+const PRO_PRESET_LABEL: Record<ProPreset, string> = {
+  natural: 'Natural',
+  balanced: 'Balanced',
+  strong: 'Strong',
+};
+
+const MAKEUP_PRESETS: { key: MakeupTarget; label: string; icon: keyof typeof Ionicons.glyphMap; defaultColor: string }[] = [
+  { key: 'lip', label: 'Ruj', icon: 'water-outline', defaultColor: '#D45A73' },
+  { key: 'cheek', label: 'Allık', icon: 'ellipse-outline', defaultColor: '#F29AAF' },
+  { key: 'bronzer', label: 'Bronzer', icon: 'sunny-outline', defaultColor: '#B97A4C' },
+  { key: 'lash', label: 'Kirpik', icon: 'eye-outline', defaultColor: '#1D1D1F' },
+  { key: 'brow', label: 'Kaş', icon: 'remove-outline', defaultColor: '#5E4735' },
+];
+
+const MAKEUP_SWATCHES: Record<MakeupTarget, string[]> = {
+  lip: ['#D45A73', '#A83253', '#F18FA7', '#BE4369', '#FF7AA2'],
+  cheek: ['#F29AAF', '#F2B2A6', '#E88E7A', '#DB6F93', '#F7C1C8'],
+  bronzer: ['#B97A4C', '#9F6642', '#D09A6B', '#7F5337', '#C88557'],
+  lash: ['#1D1D1F', '#2E2E33', '#505057'],
+  brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
+};
+
+const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
+  lip: [
+    [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146],
+    [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95],
+  ],
+  cheek: [
+    [50, 101, 118, 117, 123, 147, 187, 205, 203, 206, 216, 212],
+    [280, 330, 347, 346, 352, 376, 411, 425, 423, 426, 436, 432],
+  ],
+  bronzer: [
+    [234, 93, 132, 58, 172, 136, 150, 149, 176],
+    [454, 323, 361, 288, 397, 365, 379, 378, 400],
+  ],
+  lash: [
+    [33, 246, 161, 160, 159, 158, 157, 173, 133],
+    [263, 466, 388, 387, 386, 385, 384, 398, 362],
+  ],
+  brow: [
+    [70, 63, 105, 66, 107],
+    [300, 293, 334, 296, 336],
+  ],
+};
+
 const GRID_N = 18;
 const SIGMA = 0.10;
 
@@ -94,6 +182,14 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const [message, setMessage] = useState('Hazır. Başlat butonuna bas.');
   const [showLandmarks, setShowLandmarks] = useState(false);
   const [fps, setFps] = useState(0);
+  const [proOperation, setProOperation] = useState<ProLiveOperation>('smile_enhancement');
+  const [proPreset, setProPreset] = useState<ProPreset>('balanced');
+  const [proIntensity, setProIntensity] = useState(PRO_PRESET_VALUES.balanced.intensity);
+  const [proSmooth, setProSmooth] = useState(PRO_PRESET_VALUES.balanced.smooth);
+  const [makeupTarget, setMakeupTarget] = useState<MakeupTarget>('lip');
+  const [makeupColor, setMakeupColor] = useState(MAKEUP_PRESETS[0].defaultColor);
+  const [makeupIntensity, setMakeupIntensity] = useState(0.48);
+  const [makeupEnabled, setMakeupEnabled] = useState(true);
 
   const [intensities, setIntensities] = useState<Record<EffectId, number>>({
     smile: 0,
@@ -102,9 +198,17 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     lip: 0,
   });
   const intensitiesRef = useRef(intensities);
+  const proRef = useRef({ operation: proOperation, intensity: proIntensity, smooth: proSmooth });
+  const makeupRef = useRef({ target: makeupTarget, color: makeupColor, intensity: makeupIntensity, enabled: makeupEnabled });
   const showLandmarksRef = useRef(showLandmarks);
 
   useEffect(() => { intensitiesRef.current = intensities; }, [intensities]);
+  useEffect(() => {
+    proRef.current = { operation: proOperation, intensity: proIntensity, smooth: proSmooth };
+  }, [proOperation, proIntensity, proSmooth]);
+  useEffect(() => {
+    makeupRef.current = { target: makeupTarget, color: makeupColor, intensity: makeupIntensity, enabled: makeupEnabled };
+  }, [makeupTarget, makeupColor, makeupIntensity, makeupEnabled]);
   useEffect(() => { showLandmarksRef.current = showLandmarks; }, [showLandmarks]);
 
   const init = async () => {
@@ -147,8 +251,11 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     const result = landmarker.detectForVideo(video, performance.now());
     const lm = result.faceLandmarks?.[0];
 
+    const pro = proRef.current;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.filter = getLiveFilter(pro.operation, pro.intensity);
     ctx.drawImage(video, 0, 0, W, H);
+    ctx.filter = 'none';
 
     if (!lm) {
       setMessage('Yüz aranıyor...');
@@ -156,9 +263,15 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     }
 
     const cur = intensitiesRef.current;
+    const activeEffect = PRO_EFFECT_MAP[pro.operation];
+    const liveEffects: Record<EffectId, number> = { ...cur };
+    if (activeEffect) {
+      liveEffects[activeEffect] = Math.max(liveEffects[activeEffect], pro.intensity);
+    }
+
     const controls: { sx: number; sy: number; dxn: number; dyn: number }[] = [];
     (Object.keys(EFFECTS) as EffectId[]).forEach((effect) => {
-      const intensity = cur[effect];
+      const intensity = liveEffects[effect];
       if (intensity < 0.005) return;
       for (const anchor of EFFECTS[effect]) {
         const lp = lm[anchor.idx];
@@ -189,7 +302,8 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       const N = GRID_N;
       const cellU = (gMaxX - gMinX) / N;
       const cellV = (gMaxY - gMinY) / N;
-      const sig2 = SIGMA * SIGMA;
+      const sigma = SIGMA * (1.5 - Math.min(1, Math.max(0, pro.smooth / 10)));
+      const sig2 = sigma * sigma;
 
       const srcG: number[][] = new Array((N + 1) * (N + 1));
       const dstG: number[][] = new Array((N + 1) * (N + 1));
@@ -223,10 +337,21 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
           const k10 = k00 + (N + 1);
           const k11 = k10 + 1;
 
-          drawTri(ctx, video, srcG[k00], srcG[k01], srcG[k11], dstG[k00], dstG[k01], dstG[k11], W, H);
-          drawTri(ctx, video, srcG[k00], srcG[k11], srcG[k10], dstG[k00], dstG[k11], dstG[k10], W, H);
+          drawTri(ctx, video, srcG[k00], srcG[k01], srcG[k11], dstG[k00], dstG[k01], dstG[k11], W, H, pro.operation, pro.intensity);
+          drawTri(ctx, video, srcG[k00], srcG[k11], srcG[k10], dstG[k00], dstG[k11], dstG[k10], W, H, pro.operation, pro.intensity);
         }
       }
+    }
+
+    if (pro.operation === 'aging') {
+      drawAgingOverlay(ctx, lm, W, H, pro.intensity);
+    } else if (pro.operation === 'deaging') {
+      drawDeagingOverlay(ctx, lm, W, H, pro.intensity);
+    }
+
+    const makeup = makeupRef.current;
+    if (makeup.enabled && makeup.intensity > 0.005) {
+      drawMakeup(ctx, lm, W, H, makeup.target, makeup.color, makeup.intensity);
     }
 
     if (showLandmarksRef.current) {
@@ -304,6 +429,20 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   const resetSliders = () => {
     setIntensities({ smile: 0, slim: 0, brow: 0, lip: 0 });
+    setProOperation('smile_enhancement');
+    setProPreset('balanced');
+    setProIntensity(PRO_PRESET_VALUES.balanced.intensity);
+    setProSmooth(PRO_PRESET_VALUES.balanced.smooth);
+    setMakeupTarget('lip');
+    setMakeupColor(MAKEUP_PRESETS[0].defaultColor);
+    setMakeupIntensity(0.48);
+    setMakeupEnabled(true);
+  };
+
+  const applyPreset = (preset: ProPreset) => {
+    setProPreset(preset);
+    setProIntensity(PRO_PRESET_VALUES[preset].intensity);
+    setProSmooth(PRO_PRESET_VALUES[preset].smooth);
   };
 
   useEffect(() => {
@@ -360,33 +499,71 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
         </View>
 
         <View style={[styles.controls, { backgroundColor: panelBg, borderColor: panelBorder }]}>
-          <View style={styles.controlsHeader}>
-            <View>
-              <Text style={[styles.controlsTitle, { color: text }]}>Anlık Efektler</Text>
-              <Text style={[styles.controlsSub, { color: accent }]}>Kaydırıcıyı çevir, yüzün canlı değişsin</Text>
+          <ScrollView
+            contentContainerStyle={styles.controlsScroll}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}>
+            <View style={styles.controlsHeader}>
+              <View>
+                <Text style={[styles.controlsTitle, { color: text }]}>Anlık Efektler</Text>
+                <Text style={[styles.controlsSub, { color: accent }]}>Kaydırıcıyı çevir, yüzün canlı değişsin</Text>
+              </View>
+              <Pressable onPress={resetSliders} style={[styles.smallBtn, { borderColor: panelBorder }]}>
+                <Ionicons name="refresh-outline" size={14} color={text} />
+                <Text style={[styles.smallBtnText, { color: text }]}>Sıfırla</Text>
+              </Pressable>
             </View>
-            <Pressable onPress={resetSliders} style={[styles.smallBtn, { borderColor: panelBorder }]}>
-              <Ionicons name="refresh-outline" size={14} color={text} />
-              <Text style={[styles.smallBtnText, { color: text }]}>Sıfırla</Text>
-            </Pressable>
-          </View>
 
-          {(Object.keys(EFFECTS) as EffectId[]).map((id) => (
-            <View key={id} style={styles.sliderBlock}>
+            <Text style={[styles.sectionLabel, { color: muted }]}>PRO LAB</Text>
+            <View style={styles.operationGrid}>
+              {PRO_OPERATIONS.map((operation) => {
+                const active = proOperation === operation;
+                return (
+                  <Pressable
+                    key={operation}
+                    onPress={() => setProOperation(operation)}
+                    style={[
+                      styles.operationButton,
+                      {
+                        backgroundColor: active ? accent : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: active ? accent : panelBorder,
+                      },
+                    ]}>
+                    <Ionicons name={PRO_ICON[operation]} size={15} color={active ? '#fff' : accent} />
+                    <Text style={[styles.operationText, { color: active ? '#fff' : text }]}>{PRO_LABEL[operation]}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.presetRow}>
+              {(['natural', 'balanced', 'strong'] as ProPreset[]).map((preset) => {
+                const active = proPreset === preset;
+                return (
+                  <Pressable
+                    key={preset}
+                    onPress={() => applyPreset(preset)}
+                    style={[
+                      styles.presetButton,
+                      {
+                        backgroundColor: active ? accent : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: active ? accent : panelBorder,
+                      },
+                    ]}>
+                    <Text style={[styles.presetText, { color: active ? '#fff' : text }]}>{PRO_PRESET_LABEL[preset]}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.sliderBlock}>
               <View style={styles.sliderHeader}>
-                <View style={styles.sliderLabelGroup}>
-                  <View style={[styles.iconBubble, { backgroundColor: 'rgba(160,32,240,0.16)' }]}>
-                    <Ionicons name={EFFECT_META[id].icon} size={14} color={accent} />
-                  </View>
-                  <Text style={[styles.sliderLabel, { color: text }]}>{EFFECT_META[id].label}</Text>
-                </View>
-                <Text style={[styles.sliderValue, { color: muted }]}>
-                  {Math.round(intensities[id] * 100)}
-                </Text>
+                <Text style={[styles.sliderLabel, { color: text }]}>Intensity</Text>
+                <Text style={[styles.sliderValue, { color: muted }]}>{proIntensity.toFixed(2)}</Text>
               </View>
               <Slider
-                value={intensities[id]}
-                onValueChange={(v) => setIntensities((s) => ({ ...s, [id]: v }))}
+                value={proIntensity}
+                onValueChange={setProIntensity}
                 minimumValue={0}
                 maximumValue={1}
                 step={0.01}
@@ -395,56 +572,172 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                 thumbTintColor={accent}
               />
             </View>
-          ))}
 
-          <View style={[styles.toggleRow, { borderColor: panelBorder }]}>
-            <Text style={[styles.toggleLabel, { color: text }]}>Landmark Göster</Text>
-            <Pressable
-              onPress={() => setShowLandmarks((v) => !v)}
-              style={[
-                styles.toggleSwitch,
-                { backgroundColor: showLandmarks ? accent : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
-              ]}
-            >
-              <View style={[styles.toggleThumb, showLandmarks ? styles.toggleThumbOn : null]} />
-            </Pressable>
-          </View>
-
-          <View style={styles.actionRow}>
-            <Pressable
-              onPress={running ? stop : start}
-              style={[styles.actionBtn, { backgroundColor: running ? '#ef4444' : accent }]}
-            >
-              <Ionicons
-                name={running ? 'stop-circle-outline' : 'play-circle-outline'}
-                size={18}
-                color="#fff"
+            <View style={styles.sliderBlock}>
+              <View style={styles.sliderHeader}>
+                <Text style={[styles.sliderLabel, { color: text }]}>RBF Smooth</Text>
+                <Text style={[styles.sliderValue, { color: muted }]}>{proSmooth.toFixed(1)}</Text>
+              </View>
+              <Slider
+                value={proSmooth}
+                onValueChange={setProSmooth}
+                minimumValue={0.8}
+                maximumValue={10}
+                step={0.1}
+                minimumTrackTintColor={accent}
+                maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'}
+                thumbTintColor={accent}
               />
-              <Text style={styles.actionBtnText}>{running ? 'Durdur' : 'Başlat'}</Text>
-            </Pressable>
+            </View>
 
-            <Pressable
-              onPress={capture}
-              disabled={!running}
-              style={[
-                styles.actionBtn,
-                {
-                  backgroundColor: running ? '#0F172A' : 'rgba(0,0,0,0.30)',
-                  opacity: running ? 1 : 0.5,
-                  borderWidth: 1,
-                  borderColor: panelBorder,
-                },
-              ]}
-            >
-              <Ionicons name="camera-outline" size={18} color="#fff" />
-              <Text style={styles.actionBtnText}>Yakala & Düzenle</Text>
-            </Pressable>
-          </View>
+            <Text style={[styles.sectionLabel, { color: muted }]}>MANUEL KARIŞIM</Text>
+            <View style={styles.manualGrid}>
+              {(Object.keys(EFFECTS) as EffectId[]).map((id) => (
+                <Pressable
+                  key={id}
+                  onPress={() => setIntensities((s) => ({ ...s, [id]: s[id] > 0 ? 0 : 0.45 }))}
+                  style={[
+                    styles.manualButton,
+                    {
+                      backgroundColor: intensities[id] > 0 ? 'rgba(160,32,240,0.18)' : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                      borderColor: intensities[id] > 0 ? accent : panelBorder,
+                    },
+                  ]}>
+                  <Ionicons name={EFFECT_META[id].icon} size={14} color={accent} />
+                  <Text style={[styles.manualText, { color: text }]}>{EFFECT_META[id].label}</Text>
+                </Pressable>
+              ))}
+            </View>
 
-          <Text style={[styles.footnote, { color: muted }]}>
-            “Yakala & Düzenle”ye basınca anlık görüntü, fotoğraf düzenleme sekmesine aktarılır
-            ve yaşlandırma, ifade transferi gibi HQ efektler oradan uygulanır.
-          </Text>
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionLabel, { color: muted }]}>MAKEUP</Text>
+              <Pressable
+                onPress={() => setMakeupEnabled((value) => !value)}
+                style={[
+                  styles.miniSwitch,
+                  { backgroundColor: makeupEnabled ? accent : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
+                ]}>
+                <View style={[styles.miniSwitchThumb, makeupEnabled ? styles.miniSwitchThumbOn : null]} />
+              </Pressable>
+            </View>
+
+            <View style={styles.makeupGrid}>
+              {MAKEUP_PRESETS.map((preset) => {
+                const active = makeupTarget === preset.key;
+                return (
+                  <Pressable
+                    key={preset.key}
+                    onPress={() => {
+                      setMakeupTarget(preset.key);
+                      setMakeupColor(preset.defaultColor);
+                      setMakeupEnabled(true);
+                    }}
+                    style={[
+                      styles.makeupButton,
+                      {
+                        backgroundColor: active ? accent : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: active ? accent : panelBorder,
+                      },
+                    ]}>
+                    <Ionicons name={preset.icon} size={14} color={active ? '#fff' : accent} />
+                    <Text style={[styles.makeupText, { color: active ? '#fff' : text }]}>{preset.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.swatchRow}>
+              {(MAKEUP_SWATCHES[makeupTarget] ?? []).map((swatch) => {
+                const active = makeupColor.toUpperCase() === swatch.toUpperCase();
+                return (
+                  <Pressable
+                    key={swatch}
+                    onPress={() => {
+                      setMakeupColor(swatch);
+                      setMakeupEnabled(true);
+                    }}
+                    style={[
+                      styles.swatchButton,
+                      {
+                        backgroundColor: swatch,
+                        borderColor: active ? accent : isDark ? 'rgba(255,255,255,0.70)' : 'rgba(17,18,23,0.22)',
+                        transform: [{ scale: active ? 1.08 : 1 }],
+                      },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+
+            <View style={styles.sliderBlock}>
+              <View style={styles.sliderHeader}>
+                <Text style={[styles.sliderLabel, { color: text }]}>Makeup Intensity</Text>
+                <Text style={[styles.sliderValue, { color: muted }]}>{Math.round(makeupIntensity * 100)}%</Text>
+              </View>
+              <Slider
+                value={makeupIntensity}
+                onValueChange={(value) => {
+                  setMakeupIntensity(value);
+                  setMakeupEnabled(true);
+                }}
+                minimumValue={0}
+                maximumValue={1}
+                step={0.01}
+                minimumTrackTintColor={accent}
+                maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'}
+                thumbTintColor={accent}
+              />
+            </View>
+
+            <View style={[styles.toggleRow, { borderColor: panelBorder }]}>
+              <Text style={[styles.toggleLabel, { color: text }]}>Landmark Göster</Text>
+              <Pressable
+                onPress={() => setShowLandmarks((v) => !v)}
+                style={[
+                  styles.toggleSwitch,
+                  { backgroundColor: showLandmarks ? accent : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
+                ]}
+              >
+                <View style={[styles.toggleThumb, showLandmarks ? styles.toggleThumbOn : null]} />
+              </Pressable>
+            </View>
+
+            <View style={styles.actionRow}>
+              <Pressable
+                onPress={running ? stop : start}
+                style={[styles.actionBtn, { backgroundColor: running ? '#ef4444' : accent }]}
+              >
+                <Ionicons
+                  name={running ? 'stop-circle-outline' : 'play-circle-outline'}
+                  size={18}
+                  color="#fff"
+                />
+                <Text style={styles.actionBtnText}>{running ? 'Durdur' : 'Başlat'}</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={capture}
+                disabled={!running}
+                style={[
+                  styles.actionBtn,
+                  {
+                    backgroundColor: running ? '#0F172A' : 'rgba(0,0,0,0.30)',
+                    opacity: running ? 1 : 0.5,
+                    borderWidth: 1,
+                    borderColor: panelBorder,
+                  },
+                ]}
+              >
+                <Ionicons name="camera-outline" size={18} color="#fff" />
+                <Text style={styles.actionBtnText}>Yakala & Düzenle</Text>
+              </Pressable>
+            </View>
+
+            <Text style={[styles.footnote, { color: muted }]}>
+              “Yakala & Düzenle”ye basınca anlık görüntü, fotoğraf düzenleme sekmesine aktarılır
+              ve yaşlandırma, ifade transferi gibi HQ efektler oradan uygulanır.
+            </Text>
+          </ScrollView>
         </View>
       </View>
     </View>
@@ -457,6 +750,8 @@ function drawTri(
   s0: number[], s1: number[], s2: number[],
   d0: number[], d1: number[], d2: number[],
   W: number, H: number,
+  operation: ProLiveOperation,
+  intensity: number,
 ) {
   const m = getAffine(
     s0[0], s0[1], s1[0], s1[1], s2[0], s2[1],
@@ -472,8 +767,167 @@ function drawTri(
   ctx.closePath();
   ctx.clip();
   ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+  ctx.filter = getLiveFilter(operation, intensity);
   ctx.drawImage(video, 0, 0, W, H);
+  ctx.filter = 'none';
   ctx.restore();
+}
+
+function getLiveFilter(operation: ProLiveOperation, intensity: number) {
+  if (operation === 'aging') {
+    const contrast = 1 + intensity * 0.18;
+    const saturate = 1 - intensity * 0.28;
+    const brightness = 1 - intensity * 0.04;
+    return `contrast(${contrast}) saturate(${saturate}) brightness(${brightness})`;
+  }
+
+  if (operation === 'deaging') {
+    const saturate = 1 + intensity * 0.12;
+    const brightness = 1 + intensity * 0.06;
+    return `brightness(${brightness}) saturate(${saturate})`;
+  }
+
+  return 'none';
+}
+
+function drawAgingOverlay(ctx: CanvasRenderingContext2D, lm: any[], W: number, H: number, intensity: number) {
+  const alpha = 0.08 + intensity * 0.18;
+  const drawLine = (indices: number[], width = 1) => {
+    ctx.beginPath();
+    indices.forEach((idx, index) => {
+      const p = lm[idx];
+      if (!p) return;
+      if (index === 0) ctx.moveTo(p.x * W, p.y * H);
+      else ctx.lineTo(p.x * W, p.y * H);
+    });
+    ctx.strokeStyle = `rgba(25,18,14,${alpha})`;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  };
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawLine([10, 338, 297, 332, 284], 1 + intensity);
+  drawLine([10, 109, 67, 103, 54], 1 + intensity);
+  drawLine([50, 101, 118, 117, 123], 0.8 + intensity * 0.8);
+  drawLine([280, 330, 347, 346, 352], 0.8 + intensity * 0.8);
+  drawLine([205, 187, 147, 123], 0.8 + intensity * 0.8);
+  drawLine([425, 411, 376, 352], 0.8 + intensity * 0.8);
+  ctx.restore();
+}
+
+function drawDeagingOverlay(ctx: CanvasRenderingContext2D, lm: any[], W: number, H: number, intensity: number) {
+  let minX = 1, maxX = 0, minY = 1, maxY = 0;
+  for (const p of lm) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+
+  const x = minX * W;
+  const y = minY * H;
+  const width = (maxX - minX) * W;
+  const height = (maxY - minY) * H;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 0.05 + intensity * 0.08;
+  ctx.fillStyle = '#FFE7F2';
+  ctx.beginPath();
+  ctx.ellipse(x + width / 2, y + height * 0.48, width * 0.42, height * 0.34, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawMakeup(
+  ctx: CanvasRenderingContext2D,
+  lm: any[],
+  W: number,
+  H: number,
+  target: MakeupTarget,
+  color: string,
+  intensity: number,
+) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = target === 'lash' || target === 'brow' ? 'multiply' : 'soft-light';
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+
+  if (target === 'lash' || target === 'brow') {
+    ctx.globalAlpha = Math.min(0.82, 0.25 + intensity * 0.55);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = target === 'lash' ? 1.2 + intensity * 2.2 : 3 + intensity * 4;
+    for (const path of MAKEUP_PATHS[target]) {
+      strokeLandmarkPath(ctx, lm, path, W, H);
+    }
+  } else {
+    ctx.globalAlpha = Math.min(0.62, 0.12 + intensity * 0.48);
+    if (target === 'lip') {
+      fillLipMakeup(ctx, lm, W, H);
+    } else {
+      for (const path of MAKEUP_PATHS[target]) {
+        fillLandmarkPath(ctx, lm, path, W, H);
+      }
+    }
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function fillLipMakeup(ctx: CanvasRenderingContext2D, lm: any[], W: number, H: number) {
+  const outerLip = MAKEUP_PATHS.lip[0];
+  const innerMouth = MAKEUP_PATHS.lip[1];
+
+  ctx.beginPath();
+  outerLip.forEach((idx, index) => {
+    const p = lm[idx];
+    if (!p) return;
+    if (index === 0) ctx.moveTo(p.x * W, p.y * H);
+    else ctx.lineTo(p.x * W, p.y * H);
+  });
+  ctx.closePath();
+
+  innerMouth
+    .slice()
+    .reverse()
+    .forEach((idx, index) => {
+      const p = lm[idx];
+      if (!p) return;
+      if (index === 0) ctx.moveTo(p.x * W, p.y * H);
+      else ctx.lineTo(p.x * W, p.y * H);
+    });
+  ctx.closePath();
+  ctx.fill('evenodd');
+}
+
+function fillLandmarkPath(ctx: CanvasRenderingContext2D, lm: any[], path: number[], W: number, H: number) {
+  ctx.beginPath();
+  path.forEach((idx, index) => {
+    const p = lm[idx];
+    if (!p) return;
+    if (index === 0) ctx.moveTo(p.x * W, p.y * H);
+    else ctx.lineTo(p.x * W, p.y * H);
+  });
+  ctx.closePath();
+  ctx.fill();
+}
+
+function strokeLandmarkPath(ctx: CanvasRenderingContext2D, lm: any[], path: number[], W: number, H: number) {
+  ctx.beginPath();
+  path.forEach((idx, index) => {
+    const p = lm[idx];
+    if (!p) return;
+    if (index === 0) ctx.moveTo(p.x * W, p.y * H);
+    else ctx.lineTo(p.x * W, p.y * H);
+  });
+  ctx.stroke();
 }
 
 const styles = StyleSheet.create({
@@ -543,8 +997,14 @@ const styles = StyleSheet.create({
     minWidth: 320,
     borderRadius: 28,
     borderWidth: 1,
+    padding: 0,
+    overflow: 'hidden',
+    alignSelf: 'stretch',
+  },
+  controlsScroll: {
     padding: 18,
     gap: 14,
+    paddingBottom: 22,
   },
   controlsHeader: {
     flexDirection: 'row',
@@ -605,6 +1065,120 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     minWidth: 24,
     textAlign: 'right',
+  },
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.9,
+    marginTop: 2,
+  },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  operationGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  operationButton: {
+    width: '48%',
+    minHeight: 42,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+  },
+  operationText: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  presetRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  presetButton: {
+    flex: 1,
+    height: 36,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  presetText: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  manualGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  manualButton: {
+    width: '48%',
+    minHeight: 38,
+    borderRadius: 13,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+  },
+  manualText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  makeupGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  makeupButton: {
+    width: '31%',
+    minHeight: 38,
+    borderRadius: 13,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 6,
+  },
+  makeupText: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  swatchRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  swatchButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+  },
+  miniSwitch: {
+    width: 34,
+    height: 20,
+    borderRadius: 10,
+    padding: 2,
+  },
+  miniSwitchThumb: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  miniSwitchThumbOn: {
+    transform: [{ translateX: 14 }],
   },
   toggleRow: {
     flexDirection: 'row',

@@ -30,7 +30,6 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-    agingCompareFromBase64,
     applyMakeupFromBase64,
     estimateAgeFromBase64,
     estimateAgeFromUri,
@@ -40,7 +39,6 @@ import {
     preprocessFromUri,
     transferExpressionFromBase64,
     warpProFromBase64,
-    type AgingCompareResult,
     type ProMetrics,
     type ProWarpOperation
 } from '@/services/facial-api';
@@ -273,12 +271,6 @@ export default function CreateScreen() {
   const [landmarkPoints, setLandmarkPoints] = useState<number[][] | null>(null);
   const [showLandmarks, setShowLandmarks] = useState(false);
 
-  const [warpOp, setWarpOp] = useState<'smile' | 'raise_eyebrows' | 'widen_lips' | 'slim_face'>('smile');
-  const [warpIntensity, setWarpIntensity] = useState(0.8);
-  const [warpLoading, setWarpLoading] = useState(false);
-  const [warpError, setWarpError] = useState<string | null>(null);
-  const [warpResultB64, setWarpResultB64] = useState<string | null>(null);
-
   const [referenceExpressionName, setReferenceExpressionName] = useState<string | null>(null);
   const [referenceExpressionUri, setReferenceExpressionUri] = useState<string | null>(null);
   const [referenceExpressionSize, setReferenceExpressionSize] = useState<{ width: number; height: number } | null>(null);
@@ -289,16 +281,6 @@ export default function CreateScreen() {
   const [manualLipWarpResultB64, setManualLipWarpResultB64] = useState<string | null>(null);
   const [manualLipWarpError, setManualLipWarpError] = useState<string | null>(null);
 
-  const [agingIntensity, setAgingIntensity] = useState(0.8);
-  const [agingLoading, setAgingLoading] = useState(false);
-  const [agingError, setAgingError] = useState<string | null>(null);
-  const [agingResultB64, setAgingResultB64] = useState<string | null>(null);
-  const [agingMode, setAgingMode] = useState<'aging' | 'deaging'>('aging');
-  const [aiAgingLoading, setAiAgingLoading] = useState(false);
-  const [aiAgingError, setAiAgingError] = useState<string | null>(null);
-  const [aiAgingResultB64, setAiAgingResultB64] = useState<string | null>(null);
-  const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; estimatedAgeAfter?: number; ageDelta?: number; targetAge?: number } | null>(null);
-  const [agingComparison, setAgingComparison] = useState<AgingCompareResult['comparison'] | null>(null);
   const [landmarkBackend, setLandmarkBackend] = useState<'mediapipe' | 'dlib' | 'hybrid'>('hybrid');
   const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
@@ -946,14 +928,9 @@ export default function CreateScreen() {
     setLandmarkB64(null);
     setLandmarkCount(null);
     setLandmarkPoints(null);
-    setWarpResultB64(null);
     setMakeupResultB64(null);
     setMakeupError(null);
     resetExpressionTransferState();
-    setAgingResultB64(null);
-    setAiAgingError(null);
-    setAiAgingResultB64(null);
-    setAiAgingInfo(null);
     setProResultB64(null);
     setProMetrics(null);
     setEvalMetrics(null);
@@ -1013,35 +990,6 @@ export default function CreateScreen() {
     setStatusMessage(`Landmark koordinatlari ${format.toUpperCase()} olarak indirildi.`);
   };
 
-  const WARP_OP_TO_PRO: Record<string, ProWarpOperation> = {
-    smile: 'smile_enhancement',
-    raise_eyebrows: 'brow_lift',
-    widen_lips: 'lip_plump',
-    slim_face: 'slim_face',
-  };
-
-  const handleWarp = async () => {
-    if (!preprocessedB64 || !landmarkCount) return;
-    setWarpLoading(true);
-    setWarpError(null);
-    setWarpResultB64(null);
-    try {
-      const proOp = WARP_OP_TO_PRO[warpOp] ?? 'smile_enhancement';
-      const data = await warpProFromBase64(preprocessedB64, proOp, warpIntensity, 2.8, { landmarkBackend });
-      if (!data.success) throw new Error(data.message ?? 'Warp failed');
-      setWarpResultB64(data.result_image_b64);
-      setEvalMetrics(data.metrics ?? null);
-      setEvalSourceLabel(`Pro Warp / ${warpOp}`);
-      setEvalResultB64(data.result_image_b64 ?? null);
-      setAgeAfter(null);
-      void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
-    } catch (e: any) {
-      setWarpError(e?.message ?? 'Unknown error');
-    } finally {
-      setWarpLoading(false);
-    }
-  };
-
   const handleExpressionTransfer = async () => {
     if (!preprocessedB64 || !referenceExpressionUri) {
       setExpressionTransferError('Önce ana görseli ve referans ifade görselini seçmelisin.');
@@ -1083,89 +1031,6 @@ export default function CreateScreen() {
       Alert.alert('AI Analizinde hata oluştu', error?.message ?? 'Unknown expression transfer error');
     } finally {
       setExpressionTransferLoading(false);
-    }
-  };
-
-  const handleAging = async (mode: 'aging' | 'deaging') => {
-    if (!preprocessedB64) return;
-    setAgingMode(mode);
-    setAgingLoading(true);
-    setAgingError(null);
-    setAgingResultB64(null);
-    setAiAgingError(null);
-    setAiAgingResultB64(null);
-    setAiAgingInfo(null);
-    try {
-      const data = await frequencyProFromBase64(preprocessedB64, mode, agingIntensity, { landmarkBackend });
-      if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
-      setAgingResultB64(data.result_image_b64);
-      setSpectrumGrayB64(data.spectrum_gray_b64 ?? null);
-      setSpectrumBlueB64(data.spectrum_blue_b64 ?? null);
-      setSpectrumRedB64(data.spectrum_red_b64 ?? null);
-      setEvalMetrics(data.metrics ?? null);
-      setEvalSourceLabel(mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
-      setEvalResultB64(data.result_image_b64 ?? null);
-      if (data.estimated_age_before != null) {
-        setAiAgingInfo({
-          estimatedAgeBefore: data.estimated_age_before,
-          estimatedAgeAfter: data.estimated_age_after,
-          ageDelta: data.age_delta,
-        });
-      }
-      setAgeAfter(null);
-      void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
-    } catch (e: any) {
-      setAgingError(e?.message ?? 'Unknown error');
-    } finally {
-      setAgingLoading(false);
-    }
-  };
-
-  const handleAiAgingComparison = async () => {
-    if (!preprocessedB64) return;
-
-    setAiAgingLoading(true);
-    setAiAgingError(null);
-    setAiAgingResultB64(null);
-    setAiAgingInfo(null);
-    setAgingComparison(null);
-    setAgingLoading(true);
-    setAgingError(null);
-
-    try {
-      const data = await agingCompareFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend });
-
-      if (!data.success) {
-        throw new Error(data.message ?? 'Aging comparison failed');
-      }
-
-      setAgingResultB64(data.frequency_based.result_image_b64);
-      setAiAgingResultB64(data.ai_guided.result_image_b64 ?? null);
-      setAgingComparison(data.comparison);
-      setAiAgingInfo({
-        estimatedAgeBefore: data.age_estimation.before,
-        estimatedAgeAfter: data.age_estimation.after_ai ?? undefined,
-        ageDelta: data.age_estimation.after_ai != null
-          ? data.age_estimation.after_ai - data.age_estimation.before
-          : undefined,
-      });
-      setEvalMetrics(data.ai_guided.metrics ?? data.frequency_based.metrics ?? null);
-      setEvalSourceLabel(`AI Comparison / ${agingMode}`);
-      setEvalResultB64(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64 ?? null);
-      setProMetrics(data.ai_guided.metrics ?? null);
-      setSpectrumGrayB64(null);
-      setSpectrumBlueB64(null);
-      setSpectrumRedB64(null);
-      setAgeAfter(null);
-      void runAgeAnalysis(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64, 'after', 'base64');
-      setStatusMessage('AI destekli yaslandirma karsilastirmasi hazir.');
-    } catch (e: any) {
-      const message = e?.message ?? 'AI-guided aging comparison failed';
-      setAiAgingError(message);
-      Alert.alert('AI Aging Hatası', message);
-    } finally {
-      setAgingLoading(false);
-      setAiAgingLoading(false);
     }
   };
 
@@ -1344,17 +1209,7 @@ export default function CreateScreen() {
     setLandmarkCount(null);
     setLandmarkPoints(null);
     setShowLandmarks(false);
-    setWarpLoading(false);
-    setWarpError(null);
-    setWarpResultB64(null);
     resetExpressionTransferState();
-    setAgingLoading(false);
-    setAgingError(null);
-    setAgingResultB64(null);
-    setAiAgingLoading(false);
-    setAiAgingError(null);
-    setAiAgingResultB64(null);
-    setAiAgingInfo(null);
     setProLoading(false);
     setProError(null);
     setProResultB64(null);
@@ -1774,10 +1629,10 @@ export default function CreateScreen() {
               </View>
             ) : null}
 
-            {/* Section 3.1: Expression Transfer */}
+            {/* Section 3: Expression Transfer */}
             <View style={styles.sectionDivider} />
             <View style={styles.sectionHeader}>
-              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>3.1</Text></View>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>3</Text></View>
               <ThemedText type="defaultSemiBold">İfade Transferi</ThemedText>
             </View>
             <ThemedText style={styles.helperText}>
@@ -1831,203 +1686,10 @@ export default function CreateScreen() {
             {expressionTransferResultB64 && preprocessedB64 ? renderExpressionComparisonCard() : null}
             {expressionTransferResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
-            {/* Section 3: Expression Warp */}
-            <View style={styles.sectionDivider} />
-            <View style={styles.sectionHeader}>
-              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>3</Text></View>
-              <ThemedText type="defaultSemiBold">Yüz Deforme</ThemedText>
-            </View>
-            <View style={styles.warpGrid}>
-              {(['smile', 'raise_eyebrows', 'widen_lips', 'slim_face'] as const).map((op) => (
-                <Pressable
-                  key={op}
-                  style={[
-                    styles.warpOpButton,
-                    {
-                      backgroundColor: warpOp === op ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
-                      opacity: landmarkCount ? 1 : 0.4,
-                    },
-                  ]}
-                  onPress={() => setWarpOp(op)}
-                  disabled={!landmarkCount}>
-                  <ThemedText style={[styles.warpOpText, { color: warpOp === op ? tintTextColor : colors.text }]}>
-                    {op === 'smile' ? 'Gülümse' : op === 'raise_eyebrows' ? 'Kaşları Kaldır' : op === 'widen_lips' ? 'Dudakları Genişlet' : 'İnce Yüz'}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </View>
-            <ThemedText style={styles.helperText}>Yoğunluk: {warpIntensity.toFixed(1)}</ThemedText>
-            <View style={styles.sliderRow}>
-              <Pressable onPress={() => setWarpIntensity(Math.max(0, +(warpIntensity - 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!landmarkCount}>
-                <ThemedText>−</ThemedText>
-              </Pressable>
-              <View style={styles.sliderTrack}>
-                <View style={[styles.sliderFill, { width: `${warpIntensity * 100}%`, backgroundColor: Colors[colorScheme].tint }]} />
-              </View>
-              <Pressable onPress={() => setWarpIntensity(Math.min(1, +(warpIntensity + 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!landmarkCount}>
-                <ThemedText>+</ThemedText>
-              </Pressable>
-            </View>
-            <Pressable
-              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: landmarkCount ? 1 : 0.4 }]}
-              onPress={handleWarp}
-              disabled={!landmarkCount || warpLoading}>
-              {warpLoading
-                ? <ActivityIndicator color={tintTextColor} />
-                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Deforme Uygula</ThemedText>}
-            </Pressable>
-            {warpError ? <Text style={styles.errorText}>{warpError}</Text> : null}
-            {warpResultB64 && preprocessedB64 ? (
-              <View style={styles.sideBySide}>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Orijinal</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.sideImage} contentFit="contain" />
-                  </Pressable>
-                </View>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Sonuç</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${warpResultB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${warpResultB64}` }} style={styles.sideImage} contentFit="contain" />
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-            {warpResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
-
-            {/* Section 4: Aging Simulation */}
+            {/* Section 4: Pro Lab */}
             <View style={styles.sectionDivider} />
             <View style={styles.sectionHeader}>
               <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>4</Text></View>
-              <ThemedText type="defaultSemiBold">Yaşlandırma / Gençleştirme</ThemedText>
-            </View>
-            <ThemedText style={styles.helperText}>Yoğunluk: {agingIntensity.toFixed(1)}</ThemedText>
-            <View style={styles.sliderRow}>
-              <Pressable onPress={() => setAgingIntensity(Math.max(0, +(agingIntensity - 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!selectedImageUri}>
-                <ThemedText>−</ThemedText>
-              </Pressable>
-              <View style={styles.sliderTrack}>
-                <View style={[styles.sliderFill, { width: `${agingIntensity * 100}%`, backgroundColor: Colors[colorScheme].tint }]} />
-              </View>
-              <Pressable onPress={() => setAgingIntensity(Math.min(1, +(agingIntensity + 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!selectedImageUri}>
-                <ThemedText>+</ThemedText>
-              </Pressable>
-            </View>
-            <View style={styles.agingRow}>
-              <Pressable
-                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.4 }]}
-                onPress={() => handleAging('aging')}
-                disabled={!preprocessedB64 || agingLoading}>
-                {agingLoading && agingMode === 'aging'
-                  ? <ActivityIndicator color={tintTextColor} />
-                  : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Yaşlandır</ThemedText>}
-              </Pressable>
-              <Pressable
-                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: preprocessedB64 ? 1 : 0.4 }]}
-                onPress={() => handleAging('deaging')}
-                disabled={!preprocessedB64 || agingLoading}>
-                {agingLoading && agingMode === 'deaging'
-                  ? <ActivityIndicator color={colorScheme === 'dark' ? '#000' : '#fff'} />
-                  : <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>Gençleştir</ThemedText>}
-              </Pressable>
-            </View>
-            <Pressable
-              style={[styles.cvButton, { backgroundColor: softSurface, borderWidth: 1, borderColor: panelBorder, opacity: preprocessedB64 ? 1 : 0.4 }]}
-              onPress={handleAiAgingComparison}
-              disabled={!preprocessedB64 || aiAgingLoading || agingLoading}>
-              {aiAgingLoading
-                ? <ActivityIndicator color={colors.text} />
-                : <ThemedText style={styles.iconActionText}>AI Aging ile Karsilastir</ThemedText>}
-            </Pressable>
-            {agingError ? <Text style={styles.errorText}>{agingError}</Text> : null}
-            {aiAgingError ? <Text style={styles.errorText}>{aiAgingError}</Text> : null}
-            {agingResultB64 && preprocessedB64 ? (
-              <View style={styles.sideBySide}>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Orijinal</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.sideImage} contentFit="contain" />
-                  </Pressable>
-                </View>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Sonuç</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${agingResultB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${agingResultB64}` }} style={styles.sideImage} contentFit="contain" />
-                  </Pressable>
-                  {aiAgingInfo?.estimatedAgeBefore != null && aiAgingInfo?.estimatedAgeAfter != null ? (
-                    <ThemedText style={styles.helperText}>
-                      {aiAgingInfo.estimatedAgeBefore} yaş → {aiAgingInfo.estimatedAgeAfter} yaş
-                      {aiAgingInfo.ageDelta != null
-                        ? `  (${aiAgingInfo.ageDelta > 0 ? '+' : ''}${aiAgingInfo.ageDelta})`
-                        : ''}
-                    </ThemedText>
-                  ) : null}
-                </View>
-              </View>
-            ) : null}
-            {agingResultB64 && aiAgingResultB64 ? (
-              <View style={styles.sideBySide}>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Frequency Based</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${agingResultB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${agingResultB64}` }} style={styles.sideImage} contentFit="contain" />
-                  </Pressable>
-                </View>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>AI Guided</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${aiAgingResultB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${aiAgingResultB64}` }} style={styles.sideImage} contentFit="contain" />
-                  </Pressable>
-                  {aiAgingInfo?.estimatedAgeBefore != null ? (
-                    <ThemedText style={styles.helperText}>
-                      {aiAgingInfo.estimatedAgeBefore} yaş → {aiAgingInfo.estimatedAgeAfter ?? '?'} yaş
-                      {aiAgingInfo.ageDelta != null
-                        ? `  (${aiAgingInfo.ageDelta > 0 ? '+' : ''}${aiAgingInfo.ageDelta})`
-                        : ''}
-                    </ThemedText>
-                  ) : null}
-                </View>
-              </View>
-            ) : null}
-            {agingComparison ? (
-              <View style={styles.winnerCard}>
-                <View style={styles.winnerHeader}>
-                  <ThemedText style={styles.winnerTitle}>
-                    {agingComparison.winner === 'ai_guided'
-                      ? '🏆 AI Guided kazandı'
-                      : agingComparison.winner === 'frequency_based'
-                      ? '🏆 Frequency Based kazandı'
-                      : '🤝 Berabere'}
-                  </ThemedText>
-                </View>
-                <View style={styles.winnerMetrics}>
-                  <View style={styles.winnerMetricItem}>
-                    <ThemedText style={styles.winnerMetricLabel}>SSIM farkı</ThemedText>
-                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.ssim_delta ?? 0) >= 0 ? '#4ade80' : '#f87171' }]}>
-                      {agingComparison.ssim_delta != null ? `${agingComparison.ssim_delta > 0 ? '+' : ''}${agingComparison.ssim_delta.toFixed(4)}` : '-'}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.winnerMetricItem}>
-                    <ThemedText style={styles.winnerMetricLabel}>PSNR farkı</ThemedText>
-                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.psnr_delta ?? 0) >= 0 ? '#4ade80' : '#f87171' }]}>
-                      {agingComparison.psnr_delta != null ? `${agingComparison.psnr_delta > 0 ? '+' : ''}${agingComparison.psnr_delta.toFixed(3)} dB` : '-'}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.winnerMetricItem}>
-                    <ThemedText style={styles.winnerMetricLabel}>MSE farkı</ThemedText>
-                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.mse_delta ?? 0) <= 0 ? '#4ade80' : '#f87171' }]}>
-                      {agingComparison.mse_delta != null ? `${agingComparison.mse_delta > 0 ? '+' : ''}${agingComparison.mse_delta.toFixed(5)}` : '-'}
-                    </ThemedText>
-                  </View>
-                </View>
-              </View>
-            ) : null}
-            {agingResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
-
-            {/* Section 5: Pro Lab */}
-            <View style={styles.sectionDivider} />
-            <View style={styles.sectionHeader}>
-              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>5</Text></View>
               <ThemedText type="defaultSemiBold">Pro Lab (Canlı)</ThemedText>
             </View>
             <ThemedText style={styles.helperText}>Operasyon: {PRO_LABEL[proOperation]}</ThemedText>
