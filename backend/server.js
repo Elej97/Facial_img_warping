@@ -118,6 +118,25 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Health check
+app.get('/api/health', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW()');
+    res.json({ 
+      status: 'ok', 
+      database: 'connected',
+      time: result.rows[0].now 
+    });
+  } catch (err) {
+    console.error('[HEALTH] Database error:', err.message);
+    res.status(503).json({ 
+      status: 'error', 
+      database: 'disconnected',
+      error: err.message 
+    });
+  }
+});
+
 // Auth endpoints
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -135,8 +154,11 @@ app.post('/api/auth/register', async (req, res) => {
     });
 
     if (!user) {
+      console.error(`[REGISTER] User creation failed for email: ${email}`);
       return fail(res, 409, 'Email veya username zaten kayitli.');
     }
+
+    console.log(`[REGISTER] New user created: ${user.id} - ${user.email}`);
 
     const token = jwt.sign(
       { id: user.id, email: user.email },
@@ -151,6 +173,7 @@ app.post('/api/auth/register', async (req, res) => {
       token,
     });
   } catch (err) {
+    console.error('[REGISTER] Error:', err.message);
     return fail(res, 500, 'Kayit hatasi.', { message: err.message });
   }
 });

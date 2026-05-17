@@ -26,10 +26,10 @@ export default function LibraryScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Load user's uploads when authenticated
   const loadUploads = useCallback(async () => {
     if (!token) {
       setUploads([]);
+      setError('');
       return;
     }
 
@@ -40,15 +40,18 @@ export default function LibraryScreen() {
         headers: { Authorization: `Bearer ${token}` },
       });
 
+      const data = await response.json().catch(() => ({}));
+
       if (response.ok) {
-        const data = await response.json();
-        setUploads(data.uploads || []);
-      } else {
-        setError('Kütüphane yüklenirken hata oluştu');
+        setUploads(Array.isArray(data.uploads) ? data.uploads : []);
+        return;
       }
+
+      console.warn('Library request failed:', data.error || response.status);
+      setUploads([]);
     } catch (err) {
       console.error('Load uploads error:', err);
-      setError('Bağlantı hatası');
+      setUploads([]);
     } finally {
       setIsLoading(false);
     }

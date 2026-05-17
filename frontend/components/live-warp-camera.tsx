@@ -363,7 +363,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
           <View style={styles.controlsHeader}>
             <View>
               <Text style={[styles.controlsTitle, { color: text }]}>Anlık Efektler</Text>
-              <Text style={[styles.controlsSub, { color: accent }]}>Slider'ı çevir, yüzün canlı değişsin</Text>
+              <Text style={[styles.controlsSub, { color: accent }]}>Kaydırıcıyı çevir, yüzün canlı değişsin</Text>
             </View>
             <Pressable onPress={resetSliders} style={[styles.smallBtn, { borderColor: panelBorder }]}>
               <Ionicons name="refresh-outline" size={14} color={text} />

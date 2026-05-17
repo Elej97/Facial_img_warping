@@ -53,16 +53,16 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'dark';
   const isDark = colorScheme === 'dark';
   const isWide = width >= 980;
+  const firstName = userName?.trim().split(/\s+/)[0];
 
   return (
     <StudioScreen>
       <View style={[styles.page, isWide ? styles.pageWide : null]}>
         <View style={styles.heroCopy}>
-          {/* Welcome message */}
           <View style={styles.welcomeSection}>
             <View style={styles.welcomeContent}>
               <ThemedText style={[styles.welcomeText, !isDark ? styles.welcomeTextLight : null]}>
-                Hoşgeldiniz{userName ? ', ' + userName : ''}
+                Hoşgeldiniz{firstName ? ', ' + firstName : ''}
               </ThemedText>
             </View>
             {!userName && (
@@ -77,7 +77,7 @@ export default function HomeScreen() {
 
           <View style={styles.kicker}>
             <Ionicons name="flash" size={13} color="#C084FC" />
-            <ThemedText style={styles.kickerText}>PROFESYONEL DONUSUM</ThemedText>
+            <ThemedText style={styles.kickerText}>PROFESYONEL DÖNÜŞÜM</ThemedText>
           </View>
 
           <ThemedText style={[styles.heroTitle, !isDark ? styles.heroTitleLight : null]}>
@@ -133,26 +133,30 @@ const styles = StyleSheet.create({
   welcomeSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
+    gap: 10,
+    flexWrap: 'wrap',
     marginBottom: 8,
   },
   welcomeContent: {
-    flex: 1,
+    flexShrink: 1,
   },
   welcomeText: {
     color: STUDIO.text,
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    fontSize: 42,
+    lineHeight: 48,
+    fontWeight: '900',
+    letterSpacing: 0,
   },
   welcomeTextLight: {
     color: STUDIO.lightText,
   },
   loginButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 8,
+    minHeight: 60,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(168,85,247,0.3)',
     borderWidth: 1,
     borderColor: 'rgba(168,85,247,0.5)',
@@ -162,8 +166,8 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: '#C084FC',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '900',
   },
   kicker: {
     alignSelf: 'flex-start',

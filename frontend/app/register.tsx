@@ -13,7 +13,7 @@ export default function RegisterScreen() {
   const { signUp } = useAuth();
   const colorScheme = useColorScheme() ?? 'dark';
   const isDark = colorScheme === 'dark';
-  const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordRepeat, setPasswordRepeat] = useState('');
@@ -23,7 +23,7 @@ export default function RegisterScreen() {
   const onSubmit = async () => {
     setError('');
 
-    if (!username.trim() || !email.trim() || !password.trim() || !passwordRepeat.trim()) {
+    if (!fullName.trim() || !email.trim() || !password.trim() || !passwordRepeat.trim()) {
       setError('Tüm alanlar gereklidir');
       return;
     }
@@ -39,7 +39,7 @@ export default function RegisterScreen() {
     }
 
     setIsLoading(true);
-    const success = await signUp(email.trim(), username.trim(), password.trim());
+    const success = await signUp(email.trim(), fullName.trim(), password.trim());
     setIsLoading(false);
 
     if (success) {
@@ -63,11 +63,11 @@ export default function RegisterScreen() {
           <ThemedText style={[styles.subtitle, isDark ? styles.subtitleDark : null]}>FaceMorph topluluğuna katılarak çalışmalarını kaydet.</ThemedText>
 
           <View style={styles.field}>
-            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>KULLANICI ADI</ThemedText>
+            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>İSİM SOYISIM</ThemedText>
             <TextInput
-              value={username}
-              onChangeText={setUsername}
-              placeholder="ahmet123"
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Ahmet Yılmaz"
               placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'}
               editable={!isLoading}
               style={[styles.input, isDark ? styles.inputDark : null]}

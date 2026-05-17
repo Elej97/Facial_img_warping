@@ -160,11 +160,19 @@ const getUserById = async (userId) => {
 };
 
 const getUploadsByUserId = async (userId) => {
-  const { rows } = await pool.query(
-    `SELECT * FROM uploads WHERE user_id = $1 ORDER BY created_at DESC`,
-    [userId]
-  );
-  return rows;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM uploads WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId]
+    );
+    return rows;
+  } catch (err) {
+    if (err.code === '42P01' || err.code === '42703') {
+      console.warn('[LIBRARY] Uploads table is not ready yet; returning an empty library.');
+      return [];
+    }
+    throw err;
+  }
 };
 
 const createOrUpdateUploadWithUser = async ({ userId, id, fileName, imageUri, width, height }) => {
