@@ -8,10 +8,12 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "bcrypt": "^5.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "facial_img_warping_workspace": "file:..",
+    "jsonwebtoken": "^8.5.1",
     "pg": "^8.13.3"
   }
 }

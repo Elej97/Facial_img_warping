@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
@@ -15,13 +15,25 @@ export default function AuthScreen() {
   const isDark = colorScheme === 'dark';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const onSubmit = () => {
+  const onSubmit = async () => {
     if (!email.trim() || !password.trim()) {
+      setError('Lütfen email ve parolayı giriniz');
       return;
     }
-    signIn(email.includes('@') ? email.split('@')[0] : 'Kullanici');
-    router.replace('/');
+
+    setIsLoading(true);
+    setError('');
+    const success = await signIn(email.trim(), password.trim());
+    setIsLoading(false);
+
+    if (success) {
+      router.replace('/');
+    } else {
+      setError('Giriş yapılamadı. Email veya parolayı kontrol ediniz.');
+    }
   };
 
   return (
@@ -57,15 +69,30 @@ export default function AuthScreen() {
               placeholder="••••••••"
               placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'}
               secureTextEntry
+              editable={!isLoading}
               style={[styles.input, isDark ? styles.inputDark : null]}
             />
           </View>
 
-          <Pressable style={styles.submitButton} onPress={onSubmit}>
-            <ThemedText style={styles.submitText}>Giriş Yap</ThemedText>
+          {error ? (
+            <ThemedText style={[styles.errorText, !isDark ? styles.errorTextLight : null]}>
+              {error}
+            </ThemedText>
+          ) : null}
+
+          <Pressable
+            style={[styles.submitButton, isLoading ? styles.submitButtonDisabled : null]}
+            onPress={onSubmit}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <ThemedText style={styles.submitText}>Giriş Yap</ThemedText>
+            )}
           </Pressable>
 
-          <Pressable style={styles.registerLink} onPress={() => router.push('/register')}>
+          <Pressable style={styles.registerLink} onPress={() => router.push('/register')} disabled={isLoading}>
             <ThemedText style={styles.registerText}>Hesabın yok mu? Kayıt Ol</ThemedText>
           </Pressable>
         </View>
@@ -189,6 +216,9 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 16 },
   },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
   submitText: {
     color: '#FFFFFF',
     fontWeight: '900',
@@ -200,5 +230,14 @@ const styles = StyleSheet.create({
   registerText: {
     color: '#6E788D',
     fontWeight: '900',
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  errorTextLight: {
+    color: '#DC2626',
   },
 });

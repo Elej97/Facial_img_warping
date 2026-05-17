@@ -1,11 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 const allowedWarpModes = new Set(['smile', 'eyebrow', 'lip', 'slim']);
 const allowedModels = new Set(['MediaPipe', 'Dlib', 'DeepFace']);
@@ -95,6 +98,126 @@ async function proxyToPython(path, req, res) {
     return res.status(500).json({ success: false, message: err.message });
   }
 }
+
+// Authentication middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return fail(res, 401, 'Token bulunamadi.');
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return fail(res, 403, 'Gecersiz token.');
+    }
+    req.userId = user.id;
+    req.userEmail = user.email;
+    next();
+  });
+};
+
+// Auth endpoints
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, username, password } = req.body;
+
+    if (!email || !username || !password) {
+      return fail(res, 400, 'Email, username ve password gerekli.');
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await db.createUser({
+      email: email.toLowerCase(),
+      username: username.trim(),
+      password: hashedPassword,
+    });
+
+    if (!user) {
+      return fail(res, 409, 'Email veya username zaten kayitli.');
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return respond(res, {
+      userId: user.id,
+      email: user.email,
+      username: user.username,
+      token,
+    });
+  } catch (err) {
+    return fail(res, 500, 'Kayit hatasi.', { message: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return fail(res, 400, 'Email ve password gerekli.');
+    }
+
+    const user = await db.getUserByEmail(email.toLowerCase());
+    if (!user) {
+      return fail(res, 401, 'Email veya password yanlis.');
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return fail(res, 401, 'Email veya password yanlis.');
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return respond(res, {
+      userId: user.id,
+      email: user.email,
+      username: user.username,
+      token,
+    });
+  } catch (err) {
+    return fail(res, 500, 'Giris hatasi.', { message: err.message });
+  }
+});
+
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await db.getUserById(req.userId);
+    if (!user) {
+      return fail(res, 404, 'Kullanici bulunamadi.');
+    }
+
+    return respond(res, {
+      userId: user.id,
+      email: user.email,
+      username: user.username,
+    });
+  } catch (err) {
+    return fail(res, 500, 'Hata.', { message: err.message });
+  }
+});
+
+app.get('/api/auth/library', authenticateToken, async (req, res) => {
+  try {
+    const uploads = await db.getUploadsByUserId(req.userId);
+    return respond(res, {
+      userId: req.userId,
+      uploads,
+    });
+  } catch (err) {
+    return fail(res, 500, 'Kütüphane yükleme hatasi.', { message: err.message });
+  }
+});
 
 app.get('/api/health', async (_req, res) => {
   try {

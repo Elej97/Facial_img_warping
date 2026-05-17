@@ -5,6 +5,7 @@ import { Animated, Pressable, StyleSheet, View, useWindowDimensions } from 'reac
 
 import { STUDIO, StudioCard, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
+import { useAuth } from '@/hooks/use-auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 function DemoCard({ compact = false }: { compact?: boolean }) {
@@ -48,6 +49,7 @@ function DemoCard({ compact = false }: { compact?: boolean }) {
 export default function HomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const { userName } = useAuth();
   const colorScheme = useColorScheme() ?? 'dark';
   const isDark = colorScheme === 'dark';
   const isWide = width >= 980;
@@ -56,6 +58,23 @@ export default function HomeScreen() {
     <StudioScreen>
       <View style={[styles.page, isWide ? styles.pageWide : null]}>
         <View style={styles.heroCopy}>
+          {/* Welcome message */}
+          <View style={styles.welcomeSection}>
+            <View style={styles.welcomeContent}>
+              <ThemedText style={[styles.welcomeText, !isDark ? styles.welcomeTextLight : null]}>
+                Hoşgeldiniz{userName ? ', ' + userName : ''}
+              </ThemedText>
+            </View>
+            {!userName && (
+              <Pressable
+                style={[styles.loginButton, !isDark ? styles.loginButtonLight : null]}
+                onPress={() => router.push('/auth')}
+              >
+                <ThemedText style={styles.loginButtonText}>Giriş Yap</ThemedText>
+              </Pressable>
+            )}
+          </View>
+
           <View style={styles.kicker}>
             <Ionicons name="flash" size={13} color="#C084FC" />
             <ThemedText style={styles.kickerText}>PROFESYONEL DONUSUM</ThemedText>
@@ -110,6 +129,41 @@ const styles = StyleSheet.create({
     flex: 1,
     maxWidth: 560,
     gap: 28,
+  },
+  welcomeSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 8,
+  },
+  welcomeContent: {
+    flex: 1,
+  },
+  welcomeText: {
+    color: STUDIO.text,
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  welcomeTextLight: {
+    color: STUDIO.lightText,
+  },
+  loginButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(168,85,247,0.3)',
+    borderWidth: 1,
+    borderColor: 'rgba(168,85,247,0.5)',
+  },
+  loginButtonLight: {
+    backgroundColor: 'rgba(168,85,247,0.15)',
+  },
+  loginButtonText: {
+    color: '#C084FC',
+    fontSize: 12,
+    fontWeight: '700',
   },
   kicker: {
     alignSelf: 'flex-start',

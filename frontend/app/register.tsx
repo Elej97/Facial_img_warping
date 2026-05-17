@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
@@ -10,20 +10,43 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signUp } = useAuth();
   const colorScheme = useColorScheme() ?? 'dark';
   const isDark = colorScheme === 'dark';
-  const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordRepeat, setPasswordRepeat] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const onSubmit = () => {
-    if (!fullName.trim() || !email.trim() || !password.trim() || password !== passwordRepeat) {
+  const onSubmit = async () => {
+    setError('');
+
+    if (!username.trim() || !email.trim() || !password.trim() || !passwordRepeat.trim()) {
+      setError('Tüm alanlar gereklidir');
       return;
     }
-    signIn(fullName.trim());
-    router.replace('/');
+
+    if (password !== passwordRepeat) {
+      setError('Parolalar eşleşmiyor');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Parola en az 6 karakter olmalıdır');
+      return;
+    }
+
+    setIsLoading(true);
+    const success = await signUp(email.trim(), username.trim(), password.trim());
+    setIsLoading(false);
+
+    if (success) {
+      router.replace('/');
+    } else {
+      setError('Kayıt yapılamadı. Email zaten kullanımda olabilir.');
+    }
   };
 
   return (
@@ -40,34 +63,75 @@ export default function RegisterScreen() {
           <ThemedText style={[styles.subtitle, isDark ? styles.subtitleDark : null]}>FaceMorph topluluğuna katılarak çalışmalarını kaydet.</ThemedText>
 
           <View style={styles.field}>
-            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>İSİM SOYİSİM</ThemedText>
-            <TextInput value={fullName} onChangeText={setFullName} placeholder="Ahmet Yılmaz" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} style={[styles.input, isDark ? styles.inputDark : null]} />
+            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>KULLANICI ADI</ThemedText>
+            <TextInput
+              value={username}
+              onChangeText={setUsername}
+              placeholder="ahmet123"
+              placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'}
+              editable={!isLoading}
+              style={[styles.input, isDark ? styles.inputDark : null]}
+            />
           </View>
 
           <View style={styles.field}>
             <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>E-POSTA</ThemedText>
-            <TextInput value={email} onChangeText={setEmail} placeholder="ahmet@example.com" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} autoCapitalize="none" style={[styles.input, isDark ? styles.inputDark : null]} />
+            <TextInput
+              value={email}
+              onChangeText={setEmail}
+              placeholder="ahmet@example.com"
+              placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'}
+              autoCapitalize="none"
+              editable={!isLoading}
+              style={[styles.input, isDark ? styles.inputDark : null]}
+            />
           </View>
 
           <View style={styles.field}>
             <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>PAROLA</ThemedText>
-            <TextInput value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} secureTextEntry style={[styles.input, isDark ? styles.inputDark : null]} />
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder="••••••••"
+              placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'}
+              secureTextEntry
+              editable={!isLoading}
+              style={[styles.input, isDark ? styles.inputDark : null]}
+            />
           </View>
 
           <View style={styles.field}>
             <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>PAROLA TEKRAR</ThemedText>
-            <TextInput value={passwordRepeat} onChangeText={setPasswordRepeat} placeholder="••••••••" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} secureTextEntry style={[styles.input, isDark ? styles.inputDark : null]} />
+            <TextInput
+              value={passwordRepeat}
+              onChangeText={setPasswordRepeat}
+              placeholder="••••••••"
+              placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'}
+              secureTextEntry
+              editable={!isLoading}
+              style={[styles.input, isDark ? styles.inputDark : null]}
+            />
           </View>
 
-          {password.length > 0 && passwordRepeat.length > 0 && password !== passwordRepeat ? (
-            <Text style={styles.errorText}>Parolalar eşleşmiyor</Text>
+          {error ? (
+            <ThemedText style={[styles.errorText, !isDark ? styles.errorTextLight : null]}>
+              {error}
+            </ThemedText>
           ) : null}
 
-          <Pressable style={styles.submitButton} onPress={onSubmit}>
-            <ThemedText style={styles.submitText}>Kayıt Ol</ThemedText>
+          <Pressable
+            style={[styles.submitButton, isLoading ? styles.submitButtonDisabled : null]}
+            onPress={onSubmit}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <ThemedText style={styles.submitText}>Kayıt Ol</ThemedText>
+            )}
           </Pressable>
 
-          <Pressable style={styles.registerLink} onPress={() => router.push('/auth')}>
+          <Pressable style={styles.registerLink} onPress={() => router.push('/auth')} disabled={isLoading}>
             <ThemedText style={styles.registerText}>Zaten hesabın var mı? Giriş Yap</ThemedText>
           </Pressable>
         </View>
@@ -195,6 +259,9 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 16 },
   },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
   submitText: {
     color: '#FFFFFF',
     fontWeight: '900',
@@ -206,5 +273,8 @@ const styles = StyleSheet.create({
   registerText: {
     color: '#6E788D',
     fontWeight: '900',
+  },
+  errorTextLight: {
+    color: '#DC2626',
   },
 });
