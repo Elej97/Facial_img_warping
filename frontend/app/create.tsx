@@ -84,8 +84,8 @@ type ResizeMode = 'left' | 'right' | 'top' | 'bottom' | 'topLeft' | 'topRight' |
 
 type ProOperation = ProWarpOperation | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
-type MakeupUiTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow';
-type MakeupBackendRegion = 'lip' | 'cheek' | 'brow' | 'lash';
+type MakeupUiTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
+type MakeupBackendRegion = 'lip' | 'cheek' | 'brow' | 'lash' | 'eye' | 'teeth';
 
 type MakeupPreset = {
   key: MakeupUiTarget;
@@ -152,8 +152,10 @@ const MANUAL_MAKEUP_PRESETS: MakeupPreset[] = [
   { key: 'lip', label: 'Ruj', backendRegion: 'lip', defaultColor: '#D45A73' },
   { key: 'cheek', label: 'Allık', backendRegion: 'cheek', defaultColor: '#F29AAF' },
   { key: 'bronzer', label: 'Bronzer', backendRegion: 'cheek', defaultColor: '#B97A4C' },
-  { key: 'lash', label: 'Kirpik', backendRegion: 'lash', defaultColor: '#1D1D1F' },
+  { key: 'lash', label: 'Eyeliner', backendRegion: 'lash', defaultColor: '#1D1D1F' },
   { key: 'brow', label: 'Kaş', backendRegion: 'brow', defaultColor: '#5E4735' },
+  { key: 'eye', label: 'Göz Rengi', backendRegion: 'eye', defaultColor: '#8B4513' },
+  { key: 'teeth', label: 'Diş Beyazlatma', backendRegion: 'teeth', defaultColor: '#FFFFFF' },
 ];
 
 const MANUAL_MAKEUP_SWATCHES: Record<MakeupUiTarget, string[]> = {
@@ -162,14 +164,18 @@ const MANUAL_MAKEUP_SWATCHES: Record<MakeupUiTarget, string[]> = {
   bronzer: ['#B97A4C', '#9F6642', '#D09A6B', '#7F5337', '#C88557'],
   lash: ['#1D1D1F', '#2E2E33', '#505057'],
   brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
+  eye: ['#8B4513', '#1C3A70', '#2F5233', '#704214', '#1A1A2E'],
+  teeth: ['#FFFFFF', '#F5F5F5', '#FFFACD', '#F0E68C', '#FAFAF0'],
 };
 
 const MANUAL_MAKEUP_LABELS: Record<MakeupUiTarget, string> = {
   lip: 'Ruj',
   cheek: 'Allık',
   bronzer: 'Bronzer',
-  lash: 'Kirpik',
+  lash: 'Eyeliner',
   brow: 'Kaş',
+  eye: 'Göz Rengi',
+  teeth: 'Diş Beyazlatma',
 };
 
 const normalizeHexColor = (value: string, fallback: string) => {
@@ -290,12 +296,37 @@ export default function CreateScreen() {
   const [proError, setProError] = useState<string | null>(null);
   const [proResultB64, setProResultB64] = useState<string | null>(null);
   const [proMetrics, setProMetrics] = useState<ProMetrics | null>(null);
+  
+  // Pro operations layers system
+  type ProLayer = {
+    id: string;
+    operation: ProOperation;
+    intensity: number;
+    preset: ProPreset;
+    resultB64: string;
+    locked: boolean;
+  };
+  
+  const [proLayers, setProLayers] = useState<ProLayer[]>([]);
   const [makeupTarget, setMakeupTarget] = useState<MakeupUiTarget>('lip');
   const [makeupHexColor, setMakeupHexColor] = useState(MANUAL_MAKEUP_PRESETS[0].defaultColor);
   const [makeupIntensity, setMakeupIntensity] = useState(0.48);
   const [makeupLoading, setMakeupLoading] = useState(false);
   const [makeupError, setMakeupError] = useState<string | null>(null);
   const [makeupResultB64, setMakeupResultB64] = useState<string | null>(null);
+  
+  // Makeup layers system - keep multiple makeup layers
+  type MakeupLayer = {
+    id: string;
+    region: MakeupBackendRegion;
+    color: string;
+    intensity: number;
+    resultB64: string;
+    locked: boolean;
+  };
+  
+  const [makeupLayers, setMakeupLayers] = useState<MakeupLayer[]>([]);
+  const [renderingFromLayers, setRenderingFromLayers] = useState(false);
   const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
   const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
   const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
@@ -1095,12 +1126,15 @@ export default function CreateScreen() {
 
     const preset = MANUAL_MAKEUP_PRESETS.find((item) => item.key === makeupTarget) ?? MANUAL_MAKEUP_PRESETS[0];
     const hexColor = normalizeHexColor(makeupHexColor, preset.defaultColor);
+    
+    // Use last layer result if available, else use preprocessed image
+    const baseImageB64 = makeupLayers.length > 0 ? makeupLayers[makeupLayers.length - 1].resultB64 : preprocessedB64;
 
     setMakeupLoading(true);
     setMakeupError(null);
 
     try {
-      const data = await applyMakeupFromBase64(preprocessedB64, preset.backendRegion, hexColor, makeupIntensity, {
+      const data = await applyMakeupFromBase64(baseImageB64, preset.backendRegion, hexColor, makeupIntensity, {
         landmarkBackend: 'hybrid',
         temporalSmoothing: true,
         emaAlpha: 0.62,
@@ -1111,6 +1145,17 @@ export default function CreateScreen() {
         throw new Error(data.message ?? 'Makeup effect failed');
       }
 
+      // Add to layers array
+      const newLayer: MakeupLayer = {
+        id: `${Date.now()}-${Math.random()}`,
+        region: preset.backendRegion,
+        color: hexColor,
+        intensity: makeupIntensity,
+        resultB64: data.result_image_b64,
+        locked: true, // Default to locked
+      };
+      
+      setMakeupLayers([...makeupLayers, newLayer]);
       setMakeupResultB64(data.result_image_b64);
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
@@ -1146,6 +1191,59 @@ export default function CreateScreen() {
       }
     };
   }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth]);
+
+  const applyProLayer = async () => {
+    // Run pro operation once and add to layers
+    if (!preprocessedB64) return;
+
+    const effectiveOperation = proOperation;
+    const effectiveIntensity = proIntensity;
+    const effectiveRbfSmooth = proRbfSmooth;
+
+    setProLoading(true);
+    setProError(null);
+    try {
+      let resultB64: string | null = null;
+      
+      if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
+        const data = await frequencyProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, {
+          landmarkBackend,
+          temporalSmoothing: true,
+          emaAlpha: 0.62,
+          streamId: 'pro-ui',
+        });
+        if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
+        resultB64 = data.result_image_b64;
+      } else {
+        const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
+          landmarkBackend,
+          temporalSmoothing: true,
+          emaAlpha: 0.62,
+          streamId: 'pro-ui',
+        });
+        if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
+        resultB64 = data.result_image_b64;
+      }
+
+      if (resultB64) {
+        const newLayer: ProLayer = {
+          id: `${Date.now()}-${Math.random()}`,
+          operation: effectiveOperation,
+          intensity: effectiveIntensity,
+          preset: proPreset,
+          resultB64,
+          locked: true,
+        };
+        
+        setProLayers([...proLayers, newLayer]);
+        setProResultB64(resultB64);
+      }
+    } catch (error: any) {
+      setProError(error?.message ?? 'Unknown pro error');
+    } finally {
+      setProLoading(false);
+    }
+  };
 
   const exportCsv = async () => {
     if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
@@ -1761,8 +1859,55 @@ export default function CreateScreen() {
               disabled={!preprocessedB64}
             />
 
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.5 }]}
+              onPress={applyProLayer}
+              disabled={!preprocessedB64 || proLoading}>
+              <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Uygula Pro Efekti</ThemedText>
+            </Pressable>
+
             {proLoading ? <ActivityIndicator /> : null}
             {proError ? <Text style={styles.errorText}>{proError}</Text> : null}
+
+            {/* Pro layers display */}
+            {proLayers.length > 0 && (
+              <View style={styles.makeupLayersContainer}>
+                <ThemedText style={styles.makeupLayersTitle}>Pro Efekt Katmanları</ThemedText>
+                {proLayers.map((layer, idx) => {
+                  return (
+                    <View key={layer.id} style={styles.makeupLayerRow}>
+                      <Switch
+                        value={layer.locked}
+                        onValueChange={(newVal) => {
+                          const updated = [...proLayers];
+                          updated[idx].locked = newVal;
+                          setProLayers(updated);
+                          if (newVal) {
+                            setProResultB64(layer.resultB64);
+                          }
+                        }}
+                      />
+                      <View style={[styles.makeupLayerColor, { backgroundColor: 'rgba(100,200,255,0.5)' }]} />
+                      <ThemedText style={styles.makeupLayerLabel}>{PRO_LABEL[layer.operation]} {Math.round(layer.intensity * 100)}%</ThemedText>
+                      <Pressable
+                        onPress={() => {
+                          // When deleting a layer, also delete all layers after it
+                          const updated = proLayers.slice(0, idx);
+                          setProLayers(updated);
+                          if (updated.length > 0) {
+                            setProResultB64(updated[updated.length - 1].resultB64);
+                          } else {
+                            setProResultB64(null);
+                          }
+                        }}
+                        style={styles.makeupLayerDeleteBtn}>
+                        <Ionicons name="close-circle" size={20} color={colors.tint} />
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
 
             {proResultB64 && preprocessedB64 ? (
               <View style={styles.compareCard}>
@@ -1920,6 +2065,58 @@ export default function CreateScreen() {
 
             {makeupLoading ? <ActivityIndicator /> : null}
             {makeupError ? <Text style={styles.errorText}>{makeupError}</Text> : null}
+
+            {/* Makeup layers display */}
+            {makeupLayers.length > 0 && (
+              <View style={styles.makeupLayersContainer}>
+                <ThemedText style={styles.makeupLayersTitle}>Makyaj Katmanları</ThemedText>
+                {makeupLayers.map((layer, idx) => {
+                  const label = MANUAL_MAKEUP_LABELS[Object.keys(MANUAL_MAKEUP_LABELS).find((key) => MANUAL_MAKEUP_LABELS[key as MakeupUiTarget] === layer.region) as MakeupUiTarget] || layer.region;
+                  return (
+                    <View key={layer.id} style={styles.makeupLayerRow}>
+                      <Switch
+                        value={layer.locked}
+                        onValueChange={(newVal) => {
+                          const updated = [...makeupLayers];
+                          updated[idx].locked = newVal;
+                          setMakeupLayers(updated);
+                          if (newVal) {
+                            setMakeupResultB64(layer.resultB64);
+                          } else {
+                            // Rebuild from previous locked layer
+                            const lastLockedIdx = updated.slice(0, idx).findLastIndex((l) => l.locked);
+                            if (lastLockedIdx >= 0) {
+                              setMakeupResultB64(updated[lastLockedIdx].resultB64);
+                            } else {
+                              setMakeupResultB64(preprocessedB64);
+                            }
+                          }
+                        }}
+                      />
+                      <View style={[styles.makeupLayerColor, { backgroundColor: layer.color }]} />
+                      <ThemedText style={styles.makeupLayerLabel}>{label} {Math.round(layer.intensity * 100)}%</ThemedText>
+                      <Pressable
+                        onPress={() => {
+                          // When deleting a layer, also delete all layers after it
+                          // (they are built on top of the deleted layer's result)
+                          const updated = makeupLayers.slice(0, idx);
+                          setMakeupLayers(updated);
+                          
+                          if (updated.length > 0) {
+                            // Show the last remaining layer's result
+                            setMakeupResultB64(updated[updated.length - 1].resultB64);
+                          } else {
+                            setMakeupResultB64(null);
+                          }
+                        }}
+                        style={styles.makeupLayerDeleteBtn}>
+                        <Ionicons name="close-circle" size={20} color={colors.tint} />
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
 
             {makeupResultB64 && preprocessedB64 ? (
               <View style={styles.compareCard}>
@@ -3352,6 +3549,48 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  makeupLayersContainer: {
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(120,120,120,0.08)',
+    gap: 10,
+  },
+  makeupLayersTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    opacity: 0.7,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  makeupLayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    gap: 8,
+  },
+  makeupLayerColor: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  makeupLayerLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  makeupLayerDeleteBtn: {
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },

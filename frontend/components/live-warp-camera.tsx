@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
-type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow';
+type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
 
 type Anchor = { idx: number; dx: number; dy: number };
 
@@ -109,8 +109,10 @@ const MAKEUP_PRESETS: { key: MakeupTarget; label: string; icon: keyof typeof Ion
   { key: 'lip', label: 'Ruj', icon: 'water-outline', defaultColor: '#D45A73' },
   { key: 'cheek', label: 'Allık', icon: 'ellipse-outline', defaultColor: '#F29AAF' },
   { key: 'bronzer', label: 'Bronzer', icon: 'sunny-outline', defaultColor: '#B97A4C' },
-  { key: 'lash', label: 'Kirpik', icon: 'eye-outline', defaultColor: '#1D1D1F' },
+  { key: 'lash', label: 'Eyeliner', icon: 'eye-outline', defaultColor: '#1D1D1F' },
   { key: 'brow', label: 'Kaş', icon: 'remove-outline', defaultColor: '#5E4735' },
+  { key: 'eye', label: 'Göz Rengi', icon: 'eye-outline', defaultColor: '#8B4513' },
+  { key: 'teeth', label: 'Diş Beyazlatma', icon: 'sparkles-outline', defaultColor: '#FFFFFF' },
 ];
 
 const MAKEUP_SWATCHES: Record<MakeupTarget, string[]> = {
@@ -119,6 +121,8 @@ const MAKEUP_SWATCHES: Record<MakeupTarget, string[]> = {
   bronzer: ['#B97A4C', '#9F6642', '#D09A6B', '#7F5337', '#C88557'],
   lash: ['#1D1D1F', '#2E2E33', '#505057'],
   brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
+  eye: ['#8B4513', '#1C3A70', '#2F5233', '#704214', '#1A1A2E'],
+  teeth: ['#FFFFFF', '#F5F5F5', '#FFFACD', '#F0E68C', '#FAFAF0'],
 };
 
 const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
@@ -141,6 +145,13 @@ const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
   brow: [
     [70, 63, 105, 66, 107],
     [300, 293, 334, 296, 336],
+  ],
+  eye: [
+    [33, 246, 161, 160, 159, 158, 157, 173, 133],
+    [263, 466, 388, 387, 386, 385, 384, 398, 362],
+  ],
+  teeth: [
+    [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95],
   ],
 };
 
