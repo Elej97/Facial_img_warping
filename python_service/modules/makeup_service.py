@@ -86,6 +86,130 @@ def _mask_center(mask_u8: np.ndarray) -> tuple[int, int] | None:
     return int(moments['m10'] / moments['m00']), int(moments['m01'] / moments['m00'])
 
 
+def _draw_realistic_lashes(
+    image_np: np.ndarray,
+    landmarks: list[tuple[int, int]],
+    key: dict,
+    intensity: float,
+) -> np.ndarray:
+    """Draws eyeliner effect along eye contours."""
+    result = image_np.copy().astype(np.float32)
+    h, w = image_np.shape[:2]
+    
+    for eye_key in ['left_eye', 'right_eye']:
+        eye_points = [landmarks[i] for i in key[eye_key] if i < len(landmarks)]
+        if len(eye_points) < 4:
+            continue
+        
+        eye_points = np.array(eye_points, dtype=np.int32)
+        
+        # Split upper and lower lid
+        upper_lid = eye_points[:len(eye_points)//2]
+        lower_lid = eye_points[len(eye_points)//2:]
+        
+        # Draw upper eyeliner - smooth curve
+        if len(upper_lid) > 2:
+            eyeliner_color = (0, 0, 0)  # Black
+            thickness = max(1, int(1 + intensity * 0.8))  # 1-1.8 px
+            cv2.polylines(result, [upper_lid], False, eyeliner_color, thickness=thickness)
+        
+        # Draw lower eyeliner
+        if len(lower_lid) > 2:
+            thickness = max(1, int(1 + intensity * 0.8))
+            cv2.polylines(result, [lower_lid], False, (0, 0, 0), thickness=thickness)
+    
+    # Apply slight blur to soften eyeliner
+    result = cv2.GaussianBlur(result, (3, 3), 0.5)
+    
+    return np.uint8(np.clip(result, 0, 255))
+
+
+def _apply_eye_color(
+    image_np: np.ndarray,
+    landmarks: list[tuple[int, int]],
+    key: dict,
+    color_bgr: tuple[int, int, int],
+    intensity: float,
+) -> np.ndarray:
+    """Applies iris color change."""
+    result = image_np.copy().astype(np.float32)
+    h, w = image_np.shape[:2]
+    
+    for eye_key in ['left_eye', 'right_eye']:
+        eye_points = [landmarks[i] for i in key[eye_key] if i < len(landmarks)]
+        if len(eye_points) < 4:
+            continue
+        
+        eye_points = np.array(eye_points, dtype=np.float32)
+        
+        # Estimate iris center - approximate from eye landmarks
+        center = eye_points.mean(axis=0)
+        cx, cy = int(center[0]), int(center[1])
+        
+        # Iris radius - approximately 8-10 pixels from eye center
+        iris_radius = int(8 + intensity * 3)
+        
+        # Create iris mask using Gaussian
+        y_min = max(0, cy - iris_radius * 3)
+        y_max = min(h, cy + iris_radius * 3)
+        x_min = max(0, cx - iris_radius * 3)
+        x_max = min(w, cx + iris_radius * 3)
+        
+        if y_min < y_max and x_min < x_max:
+            yy, xx = np.meshgrid(
+                np.arange(y_min, y_max),
+                np.arange(x_min, x_max),
+                indexing='ij'
+            )
+            # Gaussian iris mask
+            iris_mask = np.exp(-((xx - cx)**2 + (yy - cy)**2) / (2 * iris_radius**2))
+            
+            # Blend eye color
+            for c in range(3):
+                result[y_min:y_max, x_min:x_max, c] = (
+                    result[y_min:y_max, x_min:x_max, c] * (1 - iris_mask * intensity * 0.7) +
+                    color_bgr[c] * iris_mask * intensity * 0.7
+                )
+    
+    return np.uint8(np.clip(result, 0, 255))
+
+
+def _apply_teeth_whitening(
+    image_np: np.ndarray,
+    landmarks: list[tuple[int, int]],
+    key: dict,
+    color_bgr: tuple[int, int, int],
+    intensity: float,
+) -> np.ndarray:
+    """Applies teeth whitening effect to mouth inner area."""
+    result = image_np.copy().astype(np.float32)
+    h, w = image_np.shape[:2]
+    
+    # Get mouth inner landmarks
+    mouth_inner = [landmarks[i] for i in key.get('mouth_inner', []) if i < len(landmarks)]
+    if len(mouth_inner) < 3:
+        return np.uint8(np.clip(result, 0, 255))
+    
+    mouth_inner = np.array(mouth_inner, dtype=np.int32)
+    
+    # Create mouth inner mask
+    mask = np.zeros((h, w), dtype=np.uint8)
+    hull = cv2.convexHull(mouth_inner)
+    cv2.fillConvexPoly(mask, hull, 255)
+    
+    # Apply Gaussian blur and dilation for smooth blend
+    mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=1)
+    mask = cv2.GaussianBlur(mask, (11, 11), 1.5)
+    mask = mask.astype(np.float32) / 255.0
+    
+    # Blend whitening color - make teeth bright
+    blend_strength = intensity * 0.6
+    for c in range(3):
+        result[:, :, c] = result[:, :, c] * (1 - mask * blend_strength) + color_bgr[c] * mask * blend_strength
+    
+    return np.uint8(np.clip(result, 0, 255))
+
+
 def _apply_tint(
     image_np: np.ndarray,
     mask: np.ndarray,
@@ -142,8 +266,10 @@ def _build_region_mask(image_np: np.ndarray, landmarks: list[tuple[int, int]], r
     regions = get_region_indices()
 
     if region == 'lip':
-        points = [landmarks[i] for i in key['mouth_outer'] if i < len(landmarks)]
-        return _polygon_mask(points, h, w, blur=17, dilate_iter=1)
+        outer = [landmarks[i] for i in key['mouth_outer'] if i < len(landmarks)]
+        inner = [landmarks[i] for i in key['mouth_inner'] if i < len(landmarks)]
+        points = outer + inner
+        return _polygon_mask(points, h, w, blur=11, dilate_iter=2)
 
     if region == 'cheek':
         left_cheek, right_cheek = _split_cheek_points(landmarks)
@@ -173,10 +299,10 @@ def _build_region_mask(image_np: np.ndarray, landmarks: list[tuple[int, int]], r
         return np.clip(left_mask + right_mask, 0.0, 1.0)
 
     if region == 'lash':
-        left_eye = [landmarks[i] for i in key['left_eye'][:9] if i < len(landmarks)]
-        right_eye = [landmarks[i] for i in key['right_eye'][:9] if i < len(landmarks)]
-        left_mask = _line_mask(h, w, left_eye, thickness=6, blur=11)
-        right_mask = _line_mask(h, w, right_eye, thickness=6, blur=11)
+        left_eye = [landmarks[i] for i in key['left_eye'] if i < len(landmarks)]
+        right_eye = [landmarks[i] for i in key['right_eye'] if i < len(landmarks)]
+        left_mask = _line_mask(h, w, left_eye, thickness=10, blur=7)
+        right_mask = _line_mask(h, w, right_eye, thickness=10, blur=7)
         return np.clip(left_mask + right_mask, 0.0, 1.0)
 
     raise ValueError('Unsupported makeup region. Use lip, cheek, brow, or lash.')
@@ -191,28 +317,49 @@ def apply_makeup(
 ) -> dict:
     intensity = float(np.clip(intensity, 0.0, 1.0))
     region = (region or '').lower().strip()
-    if region not in {'lip', 'cheek', 'brow', 'lash'}:
-        raise ValueError('region must be one of: lip, cheek, brow, lash')
+    if region not in {'lip', 'cheek', 'brow', 'lash', 'eye', 'teeth'}:
+        raise ValueError('region must be one of: lip, cheek, brow, lash, eye, teeth')
+
+    key = get_key_landmark_indices()
+    
+    # For lashes, draw realistic eyelashes
+    if region == 'lash':
+        result = _draw_realistic_lashes(image_np, landmarks, key, intensity)
+        return {
+            'result_image': result,
+            'region': region,
+            'hex_color': '000000',
+            'intensity': intensity,
+        }
+    
+    # For eye color
+    if region == 'eye':
+        color_bgr = _hex_to_bgr(hex_color)
+        result = _apply_eye_color(image_np, landmarks, key, color_bgr, intensity)
+        return {
+            'result_image': result,
+            'region': region,
+            'hex_color': _normalize_hex_color(hex_color),
+            'intensity': intensity,
+        }
+    
+    # For teeth whitening
+    if region == 'teeth':
+        color_bgr = _hex_to_bgr(hex_color)
+        result = _apply_teeth_whitening(image_np, landmarks, key, color_bgr, intensity)
+        return {
+            'result_image': result,
+            'region': region,
+            'hex_color': _normalize_hex_color(hex_color),
+            'intensity': intensity,
+        }
 
     color_bgr = _hex_to_bgr(hex_color)
     mask = _build_region_mask(image_np, landmarks, region)
 
     clone_mode = cv2.MIXED_CLONE if region in {'lip', 'cheek'} else cv2.NORMAL_CLONE
-    reinforce = 0.22 if region in {'lip', 'cheek'} else 0.14
+    reinforce = 1.0 if region == 'lip' else (0.22 if region == 'cheek' else 0.14)
     result = _apply_tint(image_np, mask, color_bgr, intensity, clone_mode=clone_mode, reinforce=reinforce)
-
-    if region == 'lash':
-        dark_boost = np.clip(0.35 + intensity * 0.45, 0.0, 0.82)
-        overlay = cv2.addWeighted(
-            result.astype(np.float32),
-            1.0 - dark_boost,
-            np.full_like(result, color_bgr, dtype=np.uint8).astype(np.float32),
-            dark_boost,
-            0,
-        )
-        lash_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=2.8, sigmaY=2.8)
-        lash_mask = np.expand_dims(np.clip(lash_mask, 0.0, 1.0), axis=2)
-        result = np.clip(result.astype(np.float32) * (1.0 - lash_mask) + overlay * lash_mask, 0, 255).astype(np.uint8)
 
     return {
         'result_image': result,

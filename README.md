@@ -113,7 +113,27 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Node.js backend (port 3000)
 cd backend
+# 1. Node.js bağımlılıkları
+npm --prefix frontend install
+npm --prefix backend install
+
+# 2. Python bağımlılıkları (doğru dizinden)
+cd python_service
+pip install -r requirements.txt
+cd ..
+
+# 3. Servisleri ayrı terminallerde çalıştır
+# Terminal 1:
+cd python_service
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2:
+cd backend
 node server.js
+
+# Terminal 3:
+cd frontend
+npx expo start --web --port 8082
 
 # Expo frontend (web, port 8082)
 cd frontend

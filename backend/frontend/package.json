@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "facial_img_warping_backend": "file:.."
+  }
+}

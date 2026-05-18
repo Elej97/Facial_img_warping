@@ -129,8 +129,20 @@ async function requestDownload(endpoint: string, body: FormData, fallbackName: s
 
 async function toImageFilePart(uri: string): Promise<Blob | { uri: string; name: string; type: string }> {
   if (Platform.OS === 'web') {
-    const blobRes = await fetch(uri);
-    return blobRes.blob();
+    try {
+      // Try to fetch the URI (works for blob: and data: URLs)
+      const blobRes = await fetch(uri);
+      if (!blobRes.ok) {
+        throw new Error(`HTTP ${blobRes.status}`);
+      }
+      return blobRes.blob();
+    } catch (error) {
+      // If fetch fails, provide a more helpful error message
+      console.error('Failed to fetch image from URI:', uri, error);
+      throw new Error(
+        `Could not load image. If using file input, make sure the file is a valid image. URI: ${uri.substring(0, 50)}...`
+      );
+    }
   }
 
   const filename = uri.split('/').pop()?.split('?')[0] ?? 'image.jpg';
