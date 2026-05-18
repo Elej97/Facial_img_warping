@@ -21,6 +21,7 @@ except Exception:
     _insight_app = None
 
 from modules.aging import apply_aging, apply_deaging
+from modules.accessory_service import apply_accessory
 from modules.evaluation_metrics import compute_quality_metrics
 from modules.landmark import detect_landmarks, draw_landmarks
 from modules.landmark_fusion import detect_landmarks_fused
@@ -669,6 +670,68 @@ async def pro_apply_makeup(
             "region": out["region"],
             "hex_color": out["hex_color"],
             "intensity": out["intensity"],
+            "landmark_info": landmark_info,
+            "result_image_b64": numpy_to_b64(out["result_image"]),
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+@app.post("/pro/apply-accessory")
+async def pro_apply_accessory(
+    image: UploadFile = File(...),
+    accessory_type: str = Form(...),
+    style: str = Form("classic"),
+    hex_color: str = Form("#1D1D1F"),
+    intensity: float = Form(0.7),
+    scale: float = Form(1.0),
+    offset_x: float = Form(0.0),
+    offset_y: float = Form(0.0),
+    landmark_backend: str = Form("hybrid"),
+    temporal_smoothing: bool = Form(False),
+    ema_alpha: float = Form(0.62),
+    stream_id: str = Form("default"),
+):
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        scale = float(np.clip(scale, 0.6, 1.6))
+        offset_x = float(np.clip(offset_x, -120.0, 120.0))
+        offset_y = float(np.clip(offset_y, -120.0, 120.0))
+        file_bytes = await image.read()
+        img = bytes_to_numpy(file_bytes)
+
+        lms, landmark_info = detect_landmarks_fused(
+            img,
+            backend=landmark_backend,
+            temporal_smoothing=temporal_smoothing,
+            ema_alpha=ema_alpha,
+            stream_id=stream_id,
+        )
+
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
+
+        out = apply_accessory(
+            img,
+            lms,
+            accessory_type=accessory_type,
+            style=style,
+            hex_color=hex_color,
+            intensity=intensity,
+            scale=scale,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+
+        return {
+            "success": True,
+            "accessory_type": out["accessory_type"],
+            "style": out["style"],
+            "hex_color": out["hex_color"],
+            "intensity": out["intensity"],
+            "scale": out["scale"],
+            "offset_x": out["offset_x"],
+            "offset_y": out["offset_y"],
             "landmark_info": landmark_info,
             "result_image_b64": numpy_to_b64(out["result_image"]),
         }
