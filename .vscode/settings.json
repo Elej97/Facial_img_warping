@@ -3,5 +3,21 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
+  },
+  "java.import.exclusions": [
+    "**/node_modules/**",
+    "**/.expo/**",
+    "**/android/.gradle/**",
+    "**/android/build/**",
+    "**/android/app/build/**"
+  ],
+  "java.project.sourcePaths": [],
+  "java.configuration.updateBuildConfiguration": "disabled",
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.expo/**": true,
+    "**/android/.gradle/**": true,
+    "**/android/build/**": true,
+    "**/android/app/build/**": true
   }
 }

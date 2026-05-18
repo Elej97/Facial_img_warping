@@ -3,11 +3,12 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const path = require('path');
 const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
+const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8001';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 const allowedWarpModes = new Set(['smile', 'eyebrow', 'lip', 'slim']);
@@ -15,6 +16,10 @@ const allowedModels = new Set(['MediaPipe', 'Dlib', 'DeepFace']);
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(
+  '/api/assets/accessories',
+  express.static(path.join(__dirname, '..', 'python_service', 'assets', 'accessories'))
+);
 app.use((req, _res, next) => {
   req._ts = Date.now();
   next();
@@ -274,6 +279,7 @@ app.post('/api/warp/pro', (req, res) => proxyToPython('/warp/pro', req, res));
 app.post('/api/frequency', (req, res) => proxyToPython('/frequency', req, res));
 app.post('/api/frequency/pro', (req, res) => proxyToPython('/frequency/pro', req, res));
 app.post('/api/pro/apply-makeup', (req, res) => proxyToPython('/pro/apply-makeup', req, res));
+app.post('/api/pro/apply-accessory', (req, res) => proxyToPython('/pro/apply-accessory', req, res));
 app.post('/api/export/csv', (req, res) => proxyBinaryToPython('/export/csv', req, res));
 app.post('/api/export/pdf', (req, res) => proxyBinaryToPython('/export/pdf', req, res));
 app.post('/api/report/export', (req, res) => proxyToPython('/report/export', req, res));

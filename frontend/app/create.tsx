@@ -1,12 +1,10 @@
-import { useRouter } from "expo-router";
-
 import Slider from '@react-native-community/slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -30,7 +28,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    applyAccessoryFromBase64,
     applyMakeupFromBase64,
+    accessoryAssetUrl,
     estimateAgeFromBase64,
     estimateAgeFromUri,
     exportEvaluationReportFromBase64,
@@ -39,6 +39,8 @@ import {
     preprocessFromUri,
     transferExpressionFromBase64,
     warpProFromBase64,
+    type AccessoryStyle,
+    type AccessoryType,
     type ProMetrics,
     type ProWarpOperation
 } from '@/services/facial-api';
@@ -47,7 +49,6 @@ import { Ionicons } from '@expo/vector-icons';
 const MIN_WIDTH = 512;
 const MIN_HEIGHT = 512;
 const MIN_CROP_SIZE = 24;
-const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const WEB_NO_SELECT_STYLE: any =
   Platform.OS === 'web'
     ? ({
@@ -86,11 +87,20 @@ type ProOperation = ProWarpOperation | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
 type MakeupUiTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
 type MakeupBackendRegion = 'lip' | 'cheek' | 'brow' | 'lash' | 'eye' | 'teeth';
+type AccessoryUiTarget = AccessoryType;
 
 type MakeupPreset = {
   key: MakeupUiTarget;
   label: string;
   backendRegion: MakeupBackendRegion;
+  defaultColor: string;
+};
+
+type AccessoryPreset = {
+  key: AccessoryUiTarget;
+  label: string;
+  styles: { key: AccessoryStyle; label: string; thumbnail: string }[];
+  defaultStyle: AccessoryStyle;
   defaultColor: string;
 };
 
@@ -178,6 +188,43 @@ const MANUAL_MAKEUP_LABELS: Record<MakeupUiTarget, string> = {
   teeth: 'Diş Beyazlatma',
 };
 
+const ACCESSORY_PRESETS: AccessoryPreset[] = [
+  {
+    key: 'glasses',
+    label: 'Gozluk',
+    defaultStyle: 'classic',
+    defaultColor: '#111827',
+    styles: [
+      { key: 'classic', label: 'Klasik', thumbnail: 'glasses/user_black_square_clean.png' },
+      { key: 'round', label: 'Altin', thumbnail: 'glasses/user_gold_frame.png' },
+      { key: 'heart', label: 'Kalp', thumbnail: 'glasses/user_pink_heart.png' },
+    ],
+  },
+  {
+    key: 'mustache',
+    label: 'Biyik',
+    defaultStyle: 'handlebar',
+    defaultColor: '#3A2618',
+    styles: [
+      { key: 'handlebar', label: 'Kivrik Biyik', thumbnail: 'mustache/handlebar_asset.png' },
+      { key: 'chevron', label: 'Sakal', thumbnail: 'mustache/full_beard_asset.png' },
+    ],
+  },
+  {
+    key: 'hat',
+    label: 'Sapka',
+    defaultStyle: 'cowboy',
+    defaultColor: '#8B4513',
+    styles: [
+      { key: 'cowboy', label: 'Kovboy', thumbnail: 'hats/CowboyHat.jpg' },
+      { key: 'cap', label: 'Kasket', thumbnail: 'hats/cap.jpg' },
+      { key: 'asian', label: 'Asya', thumbnail: 'hats/asianHat.jpg' },
+      { key: 'newasian', label: 'Asya 2', thumbnail: 'hats/newAsianHat.png' },
+      { key: 'pink', label: 'Pembe', thumbnail: 'hats/pinkHat.jpg' },
+    ],
+  },
+];
+
 const normalizeHexColor = (value: string, fallback: string) => {
   const cleaned = value.trim().replace(/^#/, '');
   if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
@@ -243,7 +290,6 @@ const clampCropBox = (box: CropBox, stage: StageLayout, imageSize: { width: numb
 };
 
 export default function CreateScreen() {
-  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   // In dark mode tint is #fff — text on tint buttons must be dark to be visible
@@ -314,6 +360,16 @@ export default function CreateScreen() {
   const [makeupLoading, setMakeupLoading] = useState(false);
   const [makeupError, setMakeupError] = useState<string | null>(null);
   const [makeupResultB64, setMakeupResultB64] = useState<string | null>(null);
+  const [accessoryEnabled, setAccessoryEnabled] = useState(false);
+  const [accessoryTarget, setAccessoryTarget] = useState<AccessoryUiTarget>('glasses');
+  const [accessoryStyle, setAccessoryStyle] = useState<AccessoryStyle>('classic');
+  const [accessoryIntensity, setAccessoryIntensity] = useState(0.72);
+  const [accessoryScale, setAccessoryScale] = useState(1);
+  const [accessoryOffsetX, setAccessoryOffsetX] = useState(0);
+  const [accessoryOffsetY, setAccessoryOffsetY] = useState(0);
+  const [accessoryLoading, setAccessoryLoading] = useState(false);
+  const [accessoryError, setAccessoryError] = useState<string | null>(null);
+  const [accessoryResultB64, setAccessoryResultB64] = useState<string | null>(null);
   
   // Makeup layers system - keep multiple makeup layers
   type MakeupLayer = {
@@ -326,7 +382,6 @@ export default function CreateScreen() {
   };
   
   const [makeupLayers, setMakeupLayers] = useState<MakeupLayer[]>([]);
-  const [renderingFromLayers, setRenderingFromLayers] = useState(false);
   const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
   const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
   const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
@@ -338,6 +393,7 @@ export default function CreateScreen() {
   const [ageLoading, setAgeLoading] = useState(false);
   const [ageError, setAgeError] = useState<string | null>(null);
   const proDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const accessoryDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ageRequestRef = useRef(0);
   const [proCompareHeld, setProCompareHeld] = useState(false);
   const proCompareOpacity = useRef(new Animated.Value(0)).current;
@@ -440,35 +496,10 @@ export default function CreateScreen() {
     }
   };
 
-  useEffect(() => {
-    cropBoxRef.current = cropBox;
-  }, [cropBox]);
-
-  useEffect(() => {
-    if (cropEditorVisible && cropStageLayout && selectedImageSize && !cropBoxRef.current) {
-      ensureCropBox(cropStageLayout);
-    }
-  }, [cropEditorVisible, cropStageLayout, selectedImageSize]);
-
-  useEffect(() => {
-    Animated.timing(proCompareOpacity, {
-      toValue: proCompareHeld ? 1 : 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  }, [proCompareHeld, proCompareOpacity]);
-
-  useEffect(() => {
-    if (!lightboxUri) {
-      setLightboxZoom(1);
-      setLightboxOffset({ x: 0, y: 0 });
-    }
-  }, [lightboxUri]);
-
-  const updateCropBox = (nextBox: CropBox | null) => {
+  const updateCropBox = useCallback((nextBox: CropBox | null) => {
     cropBoxRef.current = nextBox;
     setCropBox(nextBox);
-  };
+  }, []);
 
   const resetExpressionTransferState = () => {
     setReferenceExpressionName(null);
@@ -489,7 +520,7 @@ export default function CreateScreen() {
     setAgeError(null);
   };
 
-  const runAgeAnalysis = async (source: string, target: AgeTarget, kind: 'uri' | 'base64') => {
+  const runAgeAnalysis = useCallback(async (source: string, target: AgeTarget, kind: 'uri' | 'base64') => {
     const requestId = ++ageRequestRef.current;
     setAgeLoading(true);
     setAgeError(null);
@@ -527,7 +558,7 @@ export default function CreateScreen() {
         setAgeLoading(false);
       }
     }
-  };
+  }, []);
 
   const closeCropEditor = () => {
     setCropEditorVisible(false);
@@ -535,13 +566,38 @@ export default function CreateScreen() {
     updateCropBox(null);
   };
 
-  const ensureCropBox = (stage: StageLayout) => {
+  const ensureCropBox = useCallback((stage: StageLayout) => {
     if (!selectedImageSize) {
       return;
     }
 
     updateCropBox(createInitialCropBox(stage, selectedImageSize));
-  };
+  }, [selectedImageSize, updateCropBox]);
+
+  useEffect(() => {
+    cropBoxRef.current = cropBox;
+  }, [cropBox]);
+
+  useEffect(() => {
+    if (cropEditorVisible && cropStageLayout && selectedImageSize && !cropBoxRef.current) {
+      ensureCropBox(cropStageLayout);
+    }
+  }, [cropEditorVisible, cropStageLayout, selectedImageSize, ensureCropBox]);
+
+  useEffect(() => {
+    Animated.timing(proCompareOpacity, {
+      toValue: proCompareHeld ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [proCompareHeld, proCompareOpacity]);
+
+  useEffect(() => {
+    if (!lightboxUri) {
+      setLightboxZoom(1);
+      setLightboxOffset({ x: 0, y: 0 });
+    }
+  }, [lightboxUri]);
 
   const openCropEditor = () => {
     if (!selectedImageUri || !selectedImageSize) {
@@ -674,7 +730,7 @@ export default function CreateScreen() {
         onPanResponderTerminationRequest: () => false,
         onShouldBlockNativeResponder: () => true,
       }),
-    [cropStageLayout, selectedImageSize]
+    [cropStageLayout, selectedImageSize, updateCropBox]
   );
 
   const createResizeResponder = useMemo(
@@ -742,7 +798,7 @@ export default function CreateScreen() {
         onPanResponderTerminationRequest: () => false,
         onShouldBlockNativeResponder: () => true,
       }),
-    [cropStageLayout, selectedImageSize]
+    [cropStageLayout, selectedImageSize, updateCropBox]
   );
 
   const resizeLeftResponder = useMemo(() => createResizeResponder('left'), [createResizeResponder]);
@@ -964,6 +1020,15 @@ export default function CreateScreen() {
     resetExpressionTransferState();
     setProResultB64(null);
     setProMetrics(null);
+    setProLayers([]);
+    setMakeupLoading(false);
+    setMakeupError(null);
+    setMakeupResultB64(null);
+    setMakeupLayers([]);
+    setAccessoryLoading(false);
+    setAccessoryError(null);
+    setAccessoryResultB64(null);
+    setAccessoryEnabled(false);
     setEvalMetrics(null);
     setEvalSourceLabel(null);
     setEvalResultB64(null);
@@ -1065,7 +1130,7 @@ export default function CreateScreen() {
     }
   };
 
-  const runProOperation = async (override?: { intensity?: number; rbfSmooth?: number; operation?: ProOperation }) => {
+  const runProOperation = useCallback(async (override?: { intensity?: number; rbfSmooth?: number; operation?: ProOperation }) => {
     if (!preprocessedB64) return;
 
     const effectiveOperation = override?.operation ?? proOperation;
@@ -1119,7 +1184,7 @@ export default function CreateScreen() {
     } finally {
       setProLoading(false);
     }
-  };
+  }, [landmarkBackend, preprocessedB64, proIntensity, proOperation, proRbfSmooth, runAgeAnalysis]);
 
   const applyMakeup = async () => {
     if (!preprocessedB64) return;
@@ -1166,6 +1231,58 @@ export default function CreateScreen() {
     }
   };
 
+  const runAccessoryPreview = useCallback(async () => {
+    if (!preprocessedB64 || !accessoryEnabled) {
+      setAccessoryResultB64(null);
+      return;
+    }
+
+    const preset = ACCESSORY_PRESETS.find((item) => item.key === accessoryTarget) ?? ACCESSORY_PRESETS[0];
+    const style = preset.styles.some((item) => item.key === accessoryStyle) ? accessoryStyle : preset.defaultStyle;
+
+    setAccessoryLoading(true);
+    setAccessoryError(null);
+
+    try {
+      const data = await applyAccessoryFromBase64(
+        preprocessedB64,
+        preset.key,
+        style,
+        preset.defaultColor,
+        accessoryIntensity,
+        accessoryScale,
+        accessoryOffsetX,
+        accessoryOffsetY,
+        {
+          landmarkBackend,
+          temporalSmoothing: true,
+          emaAlpha: 0.62,
+          streamId: 'accessory-ui',
+        }
+      );
+
+      if (!data.success) {
+        throw new Error(data.message ?? data.details ?? 'Accessory effect failed');
+      }
+
+      setAccessoryResultB64(data.result_image_b64);
+    } catch (error: any) {
+      setAccessoryError(error?.message ?? 'Unknown accessory error');
+    } finally {
+      setAccessoryLoading(false);
+    }
+  }, [
+    accessoryIntensity,
+    accessoryEnabled,
+    accessoryOffsetX,
+    accessoryOffsetY,
+    accessoryScale,
+    accessoryStyle,
+    accessoryTarget,
+    landmarkBackend,
+    preprocessedB64,
+  ]);
+
   const applyProPreset = (preset: ProPreset) => {
     const values = PRO_PRESET_VALUES[preset];
     setProPreset(preset);
@@ -1173,6 +1290,27 @@ export default function CreateScreen() {
     setProRbfSmooth(values.rbfSmooth);
     // State changes above trigger the useEffect debounce — no direct call needed.
   };
+
+  useEffect(() => {
+    if (!preprocessedB64 || !accessoryEnabled) {
+      setAccessoryResultB64(null);
+      return;
+    }
+
+    if (accessoryDebounceRef.current) {
+      clearTimeout(accessoryDebounceRef.current);
+    }
+
+    accessoryDebounceRef.current = setTimeout(() => {
+      void runAccessoryPreview();
+    }, 320);
+
+    return () => {
+      if (accessoryDebounceRef.current) {
+        clearTimeout(accessoryDebounceRef.current);
+      }
+    };
+  }, [accessoryEnabled, preprocessedB64, runAccessoryPreview]);
 
   useEffect(() => {
     if (!preprocessedB64) return;
@@ -1190,7 +1328,7 @@ export default function CreateScreen() {
         clearTimeout(proDebounceRef.current);
       }
     };
-  }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth]);
+  }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth, runProOperation]);
 
   const applyProLayer = async () => {
     // Run pro operation once and add to layers
@@ -1404,6 +1542,7 @@ export default function CreateScreen() {
   const softSurface = colorScheme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(15,15,15,0.05)';
   const accent = '#8B5CF6';
   const mutedText = colorScheme === 'dark' ? '#9CA3AF' : '#64748B';
+  const activeAccessoryPreset = ACCESSORY_PRESETS.find((item) => item.key === accessoryTarget) ?? ACCESSORY_PRESETS[0];
 
   return (
     <StudioScreen style={{ backgroundColor: pageBackground }}>
@@ -1951,6 +2090,201 @@ export default function CreateScreen() {
             ) : null}
 
             {proResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
+
+            {/* Section 5: Accessories */}
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>5</Text></View>
+              <ThemedText type="defaultSemiBold">Aksesuarlar</ThemedText>
+            </View>
+            <ThemedText style={styles.helperText}>
+              Gozluk ve biyik efektleri yuz noktalarina gore otomatik konumlanir; boyut ve kaydirma ile ince ayar yapabilirsin.
+            </ThemedText>
+
+            <View style={styles.warpGrid}>
+              {ACCESSORY_PRESETS.map((preset) => {
+                const isActive = accessoryTarget === preset.key;
+                return (
+                  <Pressable
+                    key={preset.key}
+                    style={[
+                      styles.warpOpButton,
+                      {
+                        backgroundColor: isActive ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                        opacity: preprocessedB64 ? 1 : 0.4,
+                      },
+                    ]}
+                    onPress={() => {
+                      setAccessoryEnabled(true);
+                      setAccessoryTarget(preset.key);
+                      setAccessoryStyle(preset.defaultStyle);
+                      setAccessoryScale(1);
+                      setAccessoryOffsetX(0);
+                      setAccessoryOffsetY(0);
+                    }}
+                    disabled={!preprocessedB64}>
+                    <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
+                      {preset.label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.accessoryModelGrid}>
+              {activeAccessoryPreset.styles.map((styleOption) => {
+                const isActive = accessoryStyle === styleOption.key;
+                return (
+                  <Pressable
+                    key={styleOption.key}
+                    style={[
+                      styles.accessoryModelCard,
+                      {
+                        backgroundColor: isActive ? 'rgba(139,92,246,0.16)' : 'rgba(120,120,120,0.10)',
+                        borderColor: isActive ? Colors[colorScheme].tint : panelBorder,
+                        opacity: preprocessedB64 ? 1 : 0.4,
+                      },
+                    ]}
+                    onPress={() => {
+                      setAccessoryEnabled(true);
+                      setAccessoryStyle(styleOption.key);
+                    }}
+                    disabled={!preprocessedB64}>
+                    <View style={styles.accessoryThumbWrap}>
+                      <Image
+                        source={{ uri: accessoryAssetUrl(styleOption.thumbnail) }}
+                        style={styles.accessoryThumb}
+                        contentFit="contain"
+                      />
+                    </View>
+                    <ThemedText style={[styles.accessoryModelLabel, { color: colors.text }]}>
+                      {styleOption.label}
+                    </ThemedText>
+                    {isActive ? (
+                      <View style={[styles.accessorySelectedDot, { backgroundColor: Colors[colorScheme].tint }]} />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.accessoryLiveStatus}>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.accessoryLiveTitle}>Canli onizleme</ThemedText>
+                <ThemedText style={styles.helperText}>
+                  {accessoryEnabled ? 'Model veya slider degisince sonuc otomatik yenilenir.' : 'Bir model secince onizleme otomatik olusur.'}
+                </ThemedText>
+              </View>
+              {accessoryLoading ? <ActivityIndicator /> : <Ionicons name="sparkles-outline" size={18} color={colors.tint} />}
+            </View>
+
+            {accessoryEnabled ? (
+              <Pressable
+                style={[styles.iconActionButton, { backgroundColor: softSurface, borderColor: panelBorder, alignSelf: 'flex-start' }]}
+                onPress={() => {
+                  setAccessoryEnabled(false);
+                  setAccessoryResultB64(null);
+                  setAccessoryError(null);
+                }}>
+                <Ionicons name="close-outline" size={16} color={colors.text} />
+                <ThemedText style={styles.iconActionText}>Aksesuari Kaldir</ThemedText>
+              </Pressable>
+            ) : null}
+
+            <ThemedText style={styles.helperText}>Gorunurluk: {Math.round(accessoryIntensity * 100)}%</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={0}
+              maximumValue={1}
+              step={0.01}
+              value={accessoryIntensity}
+              onValueChange={setAccessoryIntensity}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            <ThemedText style={styles.helperText}>Boyut: {accessoryScale.toFixed(2)}x</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={0.6}
+              maximumValue={1.6}
+              step={0.01}
+              value={accessoryScale}
+              onValueChange={setAccessoryScale}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            <ThemedText style={styles.helperText}>X Kaydirma: {Math.round(accessoryOffsetX)} px</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={-80}
+              maximumValue={80}
+              step={1}
+              value={accessoryOffsetX}
+              onValueChange={setAccessoryOffsetX}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            <ThemedText style={styles.helperText}>Y Kaydirma: {Math.round(accessoryOffsetY)} px</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={-80}
+              maximumValue={80}
+              step={1}
+              value={accessoryOffsetY}
+              onValueChange={setAccessoryOffsetY}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            {accessoryError ? <Text style={styles.errorText}>{accessoryError}</Text> : null}
+
+            {accessoryResultB64 && preprocessedB64 ? (
+              <View style={styles.compareCard}>
+                <View style={styles.compareHeaderRow}>
+                  <ThemedText style={styles.sideLabel}>Aksesuar Sonuc</ThemedText>
+                  <View style={styles.compareHintPill}>
+                    <ThemedText style={styles.compareHintText}>BasilÄ± tut: Orijinal</ThemedText>
+                  </View>
+                </View>
+
+                <Pressable style={styles.compareStage} onPress={() => setLightboxUri(`data:image/png;base64,${accessoryResultB64}`)}>
+                  <Image source={{ uri: `data:image/png;base64,${accessoryResultB64}` }} style={styles.compareImage} contentFit="contain" />
+
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.compareOverlay,
+                      {
+                        opacity: proCompareOpacity,
+                      },
+                    ]}>
+                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.compareImage} contentFit="contain" />
+                    <View style={styles.originalTag}>
+                      <ThemedText style={styles.originalTagText}>Original</ThemedText>
+                    </View>
+                  </Animated.View>
+
+                  <Pressable
+                    style={styles.compareFab}
+                    onPressIn={() => setProCompareHeld(true)}
+                    onPressOut={() => setProCompareHeld(false)}
+                    onPress={() => null}>
+                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
+                  </Pressable>
+                </Pressable>
+              </View>
+            ) : null}
 
             {/* Section 6: Manual Makeup */}
             <ThemedText type="defaultSemiBold">6. Manual Makeup</ThemedText>
@@ -3144,6 +3478,60 @@ const styles = StyleSheet.create({
   nativeSlider: {
     width: '100%',
     height: 38,
+  },
+  accessoryLiveStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: 'rgba(120,120,120,0.10)',
+  },
+  accessoryLiveTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  accessoryModelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  accessoryModelCard: {
+    width: '31.5%',
+    minWidth: 104,
+    minHeight: 116,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 8,
+    gap: 7,
+    position: 'relative',
+  },
+  accessoryThumbWrap: {
+    width: '100%',
+    height: 64,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accessoryThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  accessoryModelLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  accessorySelectedDot: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   makeupColorRow: {
     flexDirection: 'row',

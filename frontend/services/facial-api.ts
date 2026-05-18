@@ -378,7 +378,7 @@ export async function aiGuidedAgingFromBase64(
   return requestJson('/api/aging/ai', formData);
 }
 
-export type MakeupRegion = 'lip' | 'cheek' | 'brow' | 'lash';
+export type MakeupRegion = 'lip' | 'cheek' | 'brow' | 'lash' | 'eye' | 'teeth';
 
 export async function applyMakeupFromBase64(
   imageBase64: string,
@@ -402,6 +402,46 @@ export async function applyMakeupFromBase64(
   formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
   formData.append('stream_id', options?.streamId ?? 'default');
   return requestJson('/api/pro/apply-makeup', formData);
+}
+
+export type AccessoryType = 'glasses' | 'mustache' | 'hat';
+export type AccessoryStyle = 'classic' | 'round' | 'aviator' | 'heart' | 'handlebar' | 'chevron' | 'cowboy' | 'cap' | 'asian' | 'newasian' | 'pink';
+
+export function accessoryAssetUrl(path: string): string {
+  const normalized = path.replace(/^\/+/, '');
+  return `${API_BASE}/api/assets/accessories/${normalized}`;
+}
+
+export async function applyAccessoryFromBase64(
+  imageBase64: string,
+  accessoryType: AccessoryType,
+  style: AccessoryStyle,
+  hexColor: string,
+  intensity: number,
+  scale: number,
+  offsetX: number,
+  offsetY: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+    temporalSmoothing?: boolean;
+    emaAlpha?: number;
+    streamId?: string;
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('accessory_type', accessoryType);
+  formData.append('style', style);
+  formData.append('hex_color', hexColor);
+  formData.append('intensity', String(intensity));
+  formData.append('scale', String(scale));
+  formData.append('offset_x', String(offsetX));
+  formData.append('offset_y', String(offsetY));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  formData.append('temporal_smoothing', String(options?.temporalSmoothing ?? false));
+  formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
+  formData.append('stream_id', options?.streamId ?? 'default');
+  return requestJson('/api/pro/apply-accessory', formData);
 }
 
 export async function exportCsvReportFromBase64(params: {
