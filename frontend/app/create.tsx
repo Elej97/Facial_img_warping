@@ -398,6 +398,10 @@ export default function CreateScreen() {
   const [proCompareHeld, setProCompareHeld] = useState(false);
   const proCompareOpacity = useRef(new Animated.Value(0)).current;
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const [lightboxCompareUri, setLightboxCompareUri] = useState<string | null>(null);
+
+  type TabKey = 'analysis' | 'expression' | 'prolab' | 'makeup';
+  const [activeTab, setActiveTab] = useState<TabKey>('analysis');
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
   const lightboxPanStartRef = useRef({ x: 0, y: 0 });
@@ -1543,6 +1547,14 @@ export default function CreateScreen() {
   const accent = '#8B5CF6';
   const mutedText = colorScheme === 'dark' ? '#9CA3AF' : '#64748B';
   const activeAccessoryPreset = ACCESSORY_PRESETS.find((item) => item.key === accessoryTarget) ?? ACCESSORY_PRESETS[0];
+  const getCurrentResultB64 = () => {
+    if (activeTab === 'prolab' && proResultB64) return proResultB64;
+    if (activeTab === 'makeup' && makeupResultB64) return makeupResultB64;
+    if (activeTab === 'makeup' && accessoryResultB64) return accessoryResultB64;
+    if (activeTab === 'expression' && expressionTransferResultB64) return expressionTransferResultB64;
+    return null;
+  };
+  const currentResultB64 = getCurrentResultB64();
 
   return (
     <StudioScreen style={{ backgroundColor: pageBackground }}>
@@ -1622,6 +1634,7 @@ export default function CreateScreen() {
               {
                 backgroundColor: panelBackground,
                 borderColor: panelBorder,
+                flex: currentResultB64 ? 0.6 : 0.9,
               },
             ]}>
             <View style={styles.panelTitleRow}>
@@ -1694,6 +1707,7 @@ export default function CreateScreen() {
               {
                 backgroundColor: previewBackground,
                 borderColor: panelBorder,
+                flex: currentResultB64 ? 3.5 : 1.2,
               },
             ]}>
             <View style={styles.canvasHeader}>
@@ -1706,11 +1720,22 @@ export default function CreateScreen() {
               </View>
             </View>
             {selectedImageUri ? (
-              <View style={styles.previewBox}>
-                <Image source={{ uri: selectedImageUri }} style={styles.previewImage} contentFit="cover" />
-                <View style={styles.previewBadge}>
-                  <ThemedText style={styles.previewBadgeText}>Fotoğraf Ortada</ThemedText>
+              <View style={[styles.previewBox, currentResultB64 ? { flexDirection: 'row', gap: 16, maxWidth: '100%', aspectRatio: 2 } : {}]}>
+                <View style={{ flex: 1, height: '100%', position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+                  <Image source={{ uri: selectedImageUri }} style={[styles.previewImage, { width: '100%', height: '100%' }]} contentFit="contain" />
+                  <View style={styles.previewBadge}>
+                    <ThemedText style={styles.previewBadgeText}>{currentResultB64 ? 'Önceki (Orijinal)' : 'Fotoğraf Ortada'}</ThemedText>
+                  </View>
                 </View>
+
+                {currentResultB64 ? (
+                  <View style={{ flex: 1, height: '100%', position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+                    <Image source={{ uri: `data:image/png;base64,${currentResultB64}` }} style={[styles.previewImage, { width: '100%', height: '100%' }]} contentFit="contain" />
+                    <View style={[styles.previewBadge, { backgroundColor: 'rgba(160,32,240,0.8)' }]}>
+                      <ThemedText style={styles.previewBadgeText}>Sonraki (Efektli)</ThemedText>
+                    </View>
+                  </View>
+                ) : null}
               </View>
             ) : (
               <View style={styles.emptyPreview}>
@@ -1744,10 +1769,44 @@ export default function CreateScreen() {
               {
                 backgroundColor: panelBackground,
                 borderColor: panelBorder,
+                flexDirection: 'row',
+                padding: 0,
+                overflow: 'hidden',
+                minWidth: 360,
               },
             ]}>
+            
+            {/* Vertical Toolbar */}
+            <View style={{ width: 64, borderRightWidth: 1, borderRightColor: panelBorder, backgroundColor: colorScheme === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)', paddingTop: 20, alignItems: 'center', gap: 20 }}>
+              {(['analysis', 'expression', 'prolab', 'makeup'] as TabKey[]).map((tab) => {
+                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'ProLab', makeup: 'Makyaj' };
+                  const icons: Record<TabKey, any> = { analysis: 'scan-outline', expression: 'happy-outline', prolab: 'flask-outline', makeup: 'color-palette-outline' };
+                  const isActive = activeTab === tab;
+                  return (
+                    <Pressable
+                      key={tab}
+                      onPress={() => setActiveTab(tab)}
+                      style={[
+                        {
+                          width: 48,
+                          height: 48,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: isActive ? Colors[colorScheme].tint : 'transparent',
+                        }
+                      ]}>
+                      <Ionicons name={icons[tab]} size={22} color={isActive ? tintTextColor : colors.text} />
+                      <Text style={{ fontSize: 9, marginTop: 4, fontWeight: '700', color: isActive ? tintTextColor : mutedText, letterSpacing: -0.2 }}>{labels[tab]}</Text>
+                    </Pressable>
+                  );
+              })}
+            </View>
+
+            {/* Main Content Area */}
+            <View style={{ flex: 1 }}>
             <ScrollView
-              style={styles.featurePanelScroller}
+              style={[styles.featurePanelScroller, { padding: 16 }]}
               contentContainerStyle={styles.featurePanelContent}
               showsVerticalScrollIndicator>
             <View style={styles.featureHeader}>
@@ -1755,6 +1814,8 @@ export default function CreateScreen() {
               <ThemedText style={[styles.featureHeaderSub, { color: accent }]}>Gelişmiş Parametreler</ThemedText>
             </View>
 
+            {activeTab === 'analysis' && (
+              <>
             {/* Landmark model selector (FR-7.5) */}
             <View style={{ marginBottom: 12 }}>
               <ThemedText style={[styles.sideLabel, { marginBottom: 6, textAlign: 'left' }]}>Landmark Modeli</ThemedText>
@@ -1866,6 +1927,11 @@ export default function CreateScreen() {
               </View>
             ) : null}
 
+              </>
+            )}
+
+            {activeTab === 'expression' && (
+              <>
             {/* Section 3: Expression Transfer */}
             <View style={styles.sectionDivider} />
             <View style={styles.sectionHeader}>
@@ -1923,6 +1989,11 @@ export default function CreateScreen() {
             {expressionTransferResultB64 && preprocessedB64 ? renderExpressionComparisonCard() : null}
             {expressionTransferResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
+              </>
+            )}
+
+            {activeTab === 'prolab' && (
+              <>
             {/* Section 4: Pro Lab */}
             <View style={styles.sectionDivider} />
             <View style={styles.sectionHeader}>
@@ -2059,7 +2130,10 @@ export default function CreateScreen() {
 
                 <Pressable
                   style={styles.compareStage}
-                  onPress={() => setLightboxUri(`data:image/png;base64,${proResultB64}`)}>
+                  onPress={() => {
+                    setLightboxUri(`data:image/png;base64,${proResultB64}`);
+                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64}`);
+                  }}>
                   <Image source={{ uri: `data:image/png;base64,${proResultB64}` }} style={styles.compareImage} contentFit="contain" />
 
                   {preprocessedB64 ? (
@@ -2091,6 +2165,11 @@ export default function CreateScreen() {
 
             {proResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
+              </>
+            )}
+
+            {activeTab === 'makeup' && (
+              <>
             {/* Section 5: Accessories */}
             <View style={styles.sectionDivider} />
             <View style={styles.sectionHeader}>
@@ -2258,7 +2337,12 @@ export default function CreateScreen() {
                   </View>
                 </View>
 
-                <Pressable style={styles.compareStage} onPress={() => setLightboxUri(`data:image/png;base64,${accessoryResultB64}`)}>
+                <Pressable
+                  style={styles.compareStage}
+                  onPress={() => {
+                    setLightboxUri(`data:image/png;base64,${accessoryResultB64}`);
+                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64}`);
+                  }}>
                   <Image source={{ uri: `data:image/png;base64,${accessoryResultB64}` }} style={styles.compareImage} contentFit="contain" />
 
                   <Animated.View
@@ -2461,7 +2545,12 @@ export default function CreateScreen() {
                   </View>
                 </View>
 
-                <Pressable style={styles.compareStage} onPress={() => setLightboxUri(`data:image/png;base64,${makeupResultB64}`)}>
+                <Pressable
+                  style={styles.compareStage}
+                  onPress={() => {
+                    setLightboxUri(`data:image/png;base64,${makeupResultB64}`);
+                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64}`);
+                  }}>
                   <Image source={{ uri: `data:image/png;base64,${makeupResultB64}` }} style={styles.compareImage} contentFit="contain" />
 
                   {preprocessedB64 ? (
@@ -2490,6 +2579,9 @@ export default function CreateScreen() {
                 </Pressable>
               </View>
             ) : null}
+
+              </>
+            )}
 
             {evalMetrics ? (
               <View style={styles.metricsCard}>
@@ -2584,30 +2676,62 @@ export default function CreateScreen() {
               </Pressable>
             </View>
             </ScrollView>
+            </View>
           </View>
         </View>
         )}
       </View>
       </View>
 
-      <Modal visible={!!lightboxUri} animationType="fade" transparent onRequestClose={() => setLightboxUri(null)}>
+      <Modal visible={!!lightboxUri} animationType="fade" transparent onRequestClose={() => { setLightboxUri(null); setLightboxCompareUri(null); }}>
         <View style={styles.lightboxBackdrop}>
           {lightboxUri ? (
-            <View style={styles.lightboxViewport} {...lightboxPanResponder.panHandlers}>
-              <Image
-                source={{ uri: lightboxUri }}
-                style={[
-                  styles.lightboxImage,
-                  {
-                    transform: [
-                      { translateX: lightboxOffset.x },
-                      { translateY: lightboxOffset.y },
-                      { scale: lightboxZoom },
-                    ],
-                  },
-                ]}
-                contentFit="contain"
-              />
+            <View style={[styles.lightboxViewport, lightboxCompareUri ? { flexDirection: 'row', gap: 10, padding: 20 } : {}]} {...lightboxPanResponder.panHandlers}>
+              
+              {lightboxCompareUri ? (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', width: '50%', height: '100%', position: 'relative' }}>
+                  <View style={{ position: 'absolute', top: 30, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, zIndex: 10 }}>
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Önce (Orijinal)</Text>
+                  </View>
+                  <Image
+                    source={{ uri: lightboxCompareUri }}
+                    style={[
+                      styles.lightboxImage,
+                      {
+                        transform: [
+                          { translateX: lightboxOffset.x },
+                          { translateY: lightboxOffset.y },
+                          { scale: lightboxZoom },
+                        ],
+                      },
+                    ]}
+                    contentFit="contain"
+                  />
+                </View>
+              ) : null}
+
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', width: lightboxCompareUri ? '50%' : '100%', height: '100%', position: 'relative' }}>
+                {lightboxCompareUri ? (
+                  <View style={{ position: 'absolute', top: 30, backgroundColor: 'rgba(160,32,240,0.8)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, zIndex: 10 }}>
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Sonra (Efektli)</Text>
+                  </View>
+                ) : null}
+                <Image
+                  source={{ uri: lightboxUri }}
+                  style={[
+                    styles.lightboxImage,
+                    {
+                      transform: [
+                        { translateX: lightboxOffset.x },
+                        { translateY: lightboxOffset.y },
+                        { scale: lightboxZoom },
+                      ],
+                    },
+                  ]}
+                  contentFit="contain"
+                />
+              </View>
+              
             </View>
           ) : null}
           <View style={styles.lightboxControls}>
@@ -2629,7 +2753,7 @@ export default function CreateScreen() {
               <Ionicons name="scan-outline" size={18} color="#fff" />
             </Pressable>
           </View>
-          <Pressable style={styles.lightboxClose} onPress={() => setLightboxUri(null)}>
+          <Pressable style={styles.lightboxClose} onPress={() => { setLightboxUri(null); setLightboxCompareUri(null); }}>
             <Ionicons name="close" size={24} color="#fff" />
           </Pressable>
         </View>
@@ -2849,14 +2973,14 @@ const styles = StyleSheet.create({
     gap: 18,
     width: '100%',
     alignSelf: 'center',
-    maxWidth: 1440,
+    maxWidth: '100%',
     overflow: 'hidden',
   },
   liveWrap: {
     flex: 1,
     width: '100%',
     alignSelf: 'center',
-    maxWidth: 1440,
+    maxWidth: '100%',
     overflow: 'hidden',
   },
   modeToggle: {
@@ -3981,5 +4105,25 @@ const styles = StyleSheet.create({
     height: 24,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  tabBarContainer: {
+    marginBottom: 16,
+  },
+  tabBarScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  tabButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.3)',
+    backgroundColor: 'rgba(120,120,120,0.1)',
+  },
+  tabButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.9,
   },
 });

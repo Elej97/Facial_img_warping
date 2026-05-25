@@ -75,7 +75,7 @@ def _estimate_age_from_image(img: np.ndarray) -> tuple[float, bool]:
                 actions=["age"],
                 detector_backend="opencv",
                 enforce_detection=False,
-                align=False,
+                align=True,
                 silent=True,
             )
             if isinstance(result, list):
