@@ -510,6 +510,36 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
         </View>
 
         <View style={[styles.controls, { backgroundColor: panelBg, borderColor: panelBorder }]}>
+          <View style={[styles.actionRow, { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: panelBorder }]}>
+            <Pressable
+              onPress={running ? stop : start}
+              style={[styles.actionBtn, { backgroundColor: running ? '#ef4444' : accent }]}
+            >
+              <Ionicons
+                name={running ? 'stop-circle-outline' : 'play-circle-outline'}
+                size={18}
+                color="#fff"
+              />
+              <Text style={styles.actionBtnText}>{running ? 'Durdur' : 'Başlat'}</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={capture}
+              disabled={!running}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: running ? '#0F172A' : 'rgba(0,0,0,0.30)',
+                  opacity: running ? 1 : 0.5,
+                  borderWidth: 1,
+                  borderColor: panelBorder,
+                },
+              ]}
+            >
+              <Ionicons name="camera-outline" size={18} color="#fff" />
+              <Text style={styles.actionBtnText}>Yakala & Düzenle</Text>
+            </Pressable>
+          </View>
           <ScrollView
             contentContainerStyle={styles.controlsScroll}
             showsVerticalScrollIndicator={false}
@@ -713,38 +743,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
               </Pressable>
             </View>
 
-            <View style={styles.actionRow}>
-              <Pressable
-                onPress={running ? stop : start}
-                style={[styles.actionBtn, { backgroundColor: running ? '#ef4444' : accent }]}
-              >
-                <Ionicons
-                  name={running ? 'stop-circle-outline' : 'play-circle-outline'}
-                  size={18}
-                  color="#fff"
-                />
-                <Text style={styles.actionBtnText}>{running ? 'Durdur' : 'Başlat'}</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={capture}
-                disabled={!running}
-                style={[
-                  styles.actionBtn,
-                  {
-                    backgroundColor: running ? '#0F172A' : 'rgba(0,0,0,0.30)',
-                    opacity: running ? 1 : 0.5,
-                    borderWidth: 1,
-                    borderColor: panelBorder,
-                  },
-                ]}
-              >
-                <Ionicons name="camera-outline" size={18} color="#fff" />
-                <Text style={styles.actionBtnText}>Yakala & Düzenle</Text>
-              </Pressable>
-            </View>
-
-            <Text style={[styles.footnote, { color: muted }]}>
+            <Text style={[styles.footnote, { color: muted, marginTop: 20 }]}>
               “Yakala & Düzenle”ye basınca anlık görüntü, fotoğraf düzenleme sekmesine aktarılır
               ve yaşlandırma, ifade transferi gibi HQ efektler oradan uygulanır.
             </Text>
