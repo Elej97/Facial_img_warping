@@ -37,6 +37,27 @@ def _add_gaussian_flow(flow_x: np.ndarray, flow_y: np.ndarray, center: tuple, sh
     flow_y[y1:y2, x1:x2] += float(shift[1]) * weight
 
 
+def _add_brow_lift_flow(flow_y: np.ndarray, center: tuple, shift_y: float, sigma_x: float, sigma_y: float, lower_bleed_px: float) -> None:
+    h, w = flow_y.shape
+    cx, cy = float(center[0]), float(center[1])
+    sigma_x = max(1.0, float(sigma_x))
+    sigma_y = max(1.0, float(sigma_y))
+    radius_x = int(3.0 * sigma_x)
+    radius_y = int(3.0 * sigma_y)
+
+    x1 = max(0, int(cx) - radius_x)
+    y1 = max(0, int(cy) - radius_y)
+    x2 = min(w, int(cx) + radius_x + 1)
+    y2 = min(h, int(cy) + radius_y + 1)
+    if x2 <= x1 or y2 <= y1:
+        return
+
+    yy, xx = np.mgrid[y1:y2, x1:x2].astype(np.float32)
+    weight = np.exp(-(((xx - cx) ** 2) / (sigma_x * sigma_x) + ((yy - cy) ** 2) / (sigma_y * sigma_y))).astype(np.float32)
+    weight[yy > cy + lower_bleed_px] = 0.0
+    flow_y[y1:y2, x1:x2] += float(shift_y) * weight
+
+
 def _apply_flow_warp(image_np: np.ndarray, flow_x: np.ndarray, flow_y: np.ndarray) -> np.ndarray:
     h, w = image_np.shape[:2]
     grid_x, grid_y = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
@@ -52,6 +73,70 @@ def _apply_flow_warp(image_np: np.ndarray, flow_x: np.ndarray, flow_y: np.ndarra
         interpolation=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_REFLECT_101,
     )
+
+
+def _translate_brow_texture(
+    image_np: np.ndarray,
+    landmarks: list,
+    brow_groups: list[list[int]],
+    eye_groups: list[list[int]],
+    intensity: float,
+) -> np.ndarray:
+    h, w = image_np.shape[:2]
+    scale = float(min(h, w))
+    intensity_eff = float(np.clip(intensity, 0.0, 1.0))
+
+    candidate_mask = np.zeros((h, w), dtype=np.uint8)
+    thickness = max(4, int(scale * 0.020))
+
+    for brow_ids in brow_groups:
+        points = np.array([landmarks[i] for i in brow_ids if i < len(landmarks)], dtype=np.int32)
+        if len(points) < 2:
+            continue
+        cv2.polylines(candidate_mask, [points], isClosed=False, color=255, thickness=thickness, lineType=cv2.LINE_AA)
+        for point in points:
+            cv2.circle(candidate_mask, tuple(point), max(2, thickness // 2), 255, -1, lineType=cv2.LINE_AA)
+
+    if int(candidate_mask.max()) == 0:
+        return image_np.copy()
+
+    for eye_ids in eye_groups:
+        eye_points = np.array([landmarks[i] for i in eye_ids if i < len(landmarks)], dtype=np.int32)
+        if len(eye_points) >= 3:
+            eye_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.fillConvexPoly(eye_mask, cv2.convexHull(eye_points), 255)
+            eye_mask = cv2.dilate(eye_mask, np.ones((5, 5), np.uint8), iterations=1)
+            candidate_mask[eye_mask > 0] = 0
+
+    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    candidate_pixels = gray[candidate_mask > 0]
+    if candidate_pixels.size == 0:
+        return image_np.copy()
+
+    threshold = max(35.0, min(165.0, float(np.percentile(candidate_pixels, 45)) - 4.0))
+    source_mask = np.zeros((h, w), dtype=np.uint8)
+    source_mask[(candidate_mask > 0) & (gray <= threshold)] = 255
+    source_mask = cv2.morphologyEx(source_mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    source_mask = cv2.dilate(source_mask, np.ones((3, 3), np.uint8), iterations=1)
+    source_mask[candidate_mask == 0] = 0
+
+    if int(source_mask.max()) == 0:
+        return image_np.copy()
+
+    shift_y = -scale * (0.018 + 0.018 * intensity_eff)
+    transform = np.float32([[1, 0, 0], [0, 1, shift_y]])
+
+    erase_mask = cv2.dilate(source_mask, np.ones((3, 3), np.uint8), iterations=1)
+    base = cv2.inpaint(image_np, erase_mask, max(1, int(scale * 0.004)), cv2.INPAINT_TELEA)
+    shifted_image = cv2.warpAffine(image_np, transform, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+    shifted_mask = cv2.warpAffine(source_mask, transform, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+
+    alpha = cv2.GaussianBlur(shifted_mask.astype(np.float32) / 255.0, (0, 0), sigmaX=max(1.0, scale * 0.004))
+    alpha = np.clip(alpha * (0.92 + 0.08 * intensity_eff), 0.0, 1.0)
+    alpha3 = np.stack([alpha, alpha, alpha], axis=2)
+
+    out = base.astype(np.float32) * (1.0 - alpha3) + shifted_image.astype(np.float32) * alpha3
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _region_mask(points: list, h: int, w: int, blur: int = 31, dilate_iter: int = 2) -> np.ndarray:
@@ -235,9 +320,8 @@ def simulate_smile(image_np: np.ndarray, landmarks: list, intensity: float = 0.5
 
 def raise_eyebrows(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
     h, w = image_np.shape[:2]
-    intensity_eff = float(np.clip(intensity ** 0.85, 0.0, 1.0))
+    intensity_eff = float(np.clip(intensity, 0.0, 1.0))
     scale = float(min(h, w))
-    brow_shift = -scale * 0.042 * intensity_eff
     key = get_key_landmark_indices()
 
     flow_x = np.zeros((h, w), dtype=np.float32)
@@ -245,18 +329,29 @@ def raise_eyebrows(image_np: np.ndarray, landmarks: list, intensity: float = 0.5
 
     # SADECE kaş noktalarını taşı - sigma arttırıldı
     # Göz yakın noktaları hariç (105, 107, 334, 336 out)
-    brow_sigma = scale * 0.048
+    brow_sigma = scale * 0.016
     brow_ids_full = [i for i in key["left_brow"] + key["right_brow"] if i < len(landmarks)]
-    brow_ids = [i for i in brow_ids_full if i not in [105, 107, 334, 336]]  # Göze yakın noktalar çıkar
+    brow_ids = [i for i in brow_ids_full if i in {70, 63, 105, 66, 107, 300, 293, 334, 296, 336}]
+    lift_strength = {
+        70: 0.020, 63: 0.016, 105: 0.016, 66: 0.014, 107: 0.013,
+        300: 0.020, 293: 0.016, 334: 0.016, 296: 0.014, 336: 0.013,
+    }
     for i in brow_ids:
         if i < len(landmarks):
-            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, brow_shift), brow_sigma)
+            _add_brow_lift_flow(
+                flow_y,
+                landmarks[i],
+                -scale * lift_strength.get(i, 0.011) * intensity_eff,
+                sigma_x=scale * 0.026,
+                sigma_y=brow_sigma,
+                lower_bleed_px=scale * 0.020,
+            )
 
     # Forehead hafif yukarı - kaşın doğal kalması için
     forehead = [10, 67, 109, 338, 297]
     for i in forehead:
         if i < len(landmarks):
-            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, brow_shift * 0.15), scale * 0.035)
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, -scale * 0.002 * intensity_eff), scale * 0.026)
     
     # Zone mask: Kaş + forehead - göz altı dışarıda
     left_zone = [landmarks[i] for i in brow_ids if landmarks[i][0] < w // 2]
@@ -269,14 +364,28 @@ def raise_eyebrows(image_np: np.ndarray, landmarks: list, intensity: float = 0.5
         if i < len(landmarks):
             right_zone.append(landmarks[i])
 
-    mask_left = _region_mask(left_zone, h, w, blur=22, dilate_iter=1)
-    mask_right = _region_mask(right_zone, h, w, blur=22, dilate_iter=1)
+    for i in [159, 160, 161]:
+        if i < len(landmarks):
+            left_zone.append(landmarks[i])
+    for i in [386, 385, 384]:
+        if i < len(landmarks):
+            right_zone.append(landmarks[i])
+
+    mask_left = _region_mask(left_zone, h, w, blur=11, dilate_iter=1)
+    mask_right = _region_mask(right_zone, h, w, blur=11, dilate_iter=1)
     zone_mask = np.clip(mask_left + mask_right, 0.0, 1.0)
+    for eye_ids in [
+        [33, 133, 145, 159, 160, 161, 163, 144, 153, 154, 155, 158, 157],
+        [362, 263, 374, 386, 385, 384, 390, 373, 380, 381, 382, 387, 388],
+    ]:
+        eye_pts = [landmarks[i] for i in eye_ids if i < len(landmarks)]
+        if len(eye_pts) >= 3:
+            zone_mask = np.clip(zone_mask - _region_mask(eye_pts, h, w, blur=15, dilate_iter=1), 0.0, 1.0)
     flow_x *= zone_mask
     flow_y *= zone_mask
 
     warped = _apply_flow_warp(image_np, flow_x, flow_y)
-    return _blend_output(image_np, warped, intensity_eff, min_alpha=0.38, max_alpha=0.70)
+    return _blend_output(image_np, warped, intensity_eff, min_alpha=0.55, max_alpha=0.82)
 
 
 def widen_lips(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
