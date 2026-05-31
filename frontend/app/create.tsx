@@ -28,9 +28,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    accessoryAssetUrl,
     applyAccessoryFromBase64,
     applyMakeupFromBase64,
-    accessoryAssetUrl,
     estimateAgeFromBase64,
     estimateAgeFromUri,
     exportEvaluationReportFromBase64,
@@ -264,6 +264,15 @@ const getContainLayout = (stage: StageLayout, imageSize: { width: number; height
     offsetX: (stage.width - renderWidth) / 2,
     offsetY: (stage.height - renderHeight) / 2,
   };
+};
+
+const toWebImageUri = (asset: { uri: string; base64?: string | null; mimeType?: string | null }) => {
+  if (Platform.OS !== 'web' || !asset.base64) {
+    return asset.uri;
+  }
+
+  const mimeType = asset.mimeType || 'image/jpeg';
+  return `data:${mimeType};base64,${asset.base64}`;
 };
 
 const createInitialCropBox = (stage: StageLayout, imageSize: { width: number; height: number }): CropBox => {
@@ -869,6 +878,7 @@ export default function CreateScreen() {
       quality: 0.4,  // Daha düşük çözünürlük (çok hızlı işleme)
       allowsEditing: false,
       selectionLimit: 1,
+      base64: Platform.OS === 'web',
     });
 
     if (result.canceled || result.assets.length === 0) {
@@ -899,7 +909,7 @@ export default function CreateScreen() {
     }
 
     setSelectedImageName(rawName);
-    setSelectedImageUri(asset.uri);
+    setSelectedImageUri(toWebImageUri(asset));
     setSelectedImageSize({ width: asset.width ?? MIN_WIDTH, height: asset.height ?? MIN_HEIGHT });
     setProcessState('selected');
     setStatusMessage(`Seçilen görsel hazır: ${asset.width}x${asset.height}.`);
@@ -918,6 +928,7 @@ export default function CreateScreen() {
       quality: 0.4,
       allowsEditing: false,
       selectionLimit: 1,
+      base64: Platform.OS === 'web',
     });
 
     if (result.canceled || result.assets.length === 0) {
@@ -946,7 +957,7 @@ export default function CreateScreen() {
     }
 
     setReferenceExpressionName(rawName);
-    setReferenceExpressionUri(asset.uri);
+    setReferenceExpressionUri(toWebImageUri(asset));
     setReferenceExpressionSize({ width: asset.width ?? MIN_WIDTH, height: asset.height ?? MIN_HEIGHT });
     setExpressionTransferError(null);
     setExpressionTransferResultB64(null);

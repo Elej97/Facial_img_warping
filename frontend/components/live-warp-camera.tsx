@@ -2,12 +2,15 @@ import Slider from '@react-native-community/slider';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
 
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
 type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
+type LandmarkPoint = { x: number; y: number; z?: number };
+type MakeupProfile = { active: boolean; color: string; intensity: number };
 
 type Anchor = { idx: number; dx: number; dy: number };
 
@@ -86,12 +89,36 @@ const PRO_ICON: Record<ProLiveOperation, keyof typeof Ionicons.glyphMap> = {
   deaging: 'sparkles-outline',
 };
 
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        resolve(result.split(',')[1] ?? '');
+      } else {
+        reject(new Error('Failed to read preview blob'));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read preview blob'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 const PRO_EFFECT_MAP: Partial<Record<ProLiveOperation, EffectId>> = {
   smile_enhancement: 'smile',
   brow_lift: 'brow',
   lip_plump: 'lip',
   slim_face: 'slim',
 };
+
+const LIVE_DETECT_INTERVAL_MS = 72;
+const LIVE_AGING_INTERVAL_MS = 1400;
+const LIVE_DEAGING_INTERVAL_MS = 2000;
+const LIVE_AGING_TIMEOUT_MS = 1200;
+const LIVE_LANDMARK_ALPHA = 0.72;
+const IRIS_LEFT = [468, 469, 470, 471, 472];
+const IRIS_RIGHT = [473, 474, 475, 476, 477];
 
 const PRO_PRESET_VALUES: Record<ProPreset, { intensity: number; smooth: number }> = {
   natural: { intensity: 0.3, smooth: 4.0 },
@@ -123,6 +150,16 @@ const MAKEUP_SWATCHES: Record<MakeupTarget, string[]> = {
   brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
   eye: ['#8B4513', '#1C3A70', '#2F5233', '#704214', '#1A1A2E'],
   teeth: ['#FFFFFF', '#F5F5F5', '#FFFACD', '#F0E68C', '#FAFAF0'],
+};
+
+const DEFAULT_MAKEUP_PROFILE: Record<MakeupTarget, MakeupProfile> = {
+  lip: { active: false, color: '#D45A73', intensity: 0.48 },
+  cheek: { active: false, color: '#F29AAF', intensity: 0.48 },
+  bronzer: { active: false, color: '#B97A4C', intensity: 0.48 },
+  lash: { active: false, color: '#1D1D1F', intensity: 0.48 },
+  brow: { active: false, color: '#5E4735', intensity: 0.48 },
+  eye: { active: false, color: '#8B4513', intensity: 0.48 },
+  teeth: { active: false, color: '#FFFFFF', intensity: 0.48 },
 };
 
 const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
@@ -175,6 +212,456 @@ function getAffine(
   return [a, b, c, d, e, f];
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace('#', '').trim();
+  const full = normalized.length === 3
+    ? normalized.split('').map((part) => part + part).join('')
+    : normalized.padEnd(6, '0');
+  const red = parseInt(full.slice(0, 2), 16);
+  const green = parseInt(full.slice(2, 4), 16);
+  const blue = parseInt(full.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${clamp(alpha, 0, 1)})`;
+}
+
+function isVeryDarkHex(hex: string) {
+  const normalized = hex.replace('#', '').trim();
+  const full = normalized.length === 3
+    ? normalized.split('').map((part) => part + part).join('')
+    : normalized.padEnd(6, '0');
+  const red = parseInt(full.slice(0, 2), 16);
+  const green = parseInt(full.slice(2, 4), 16);
+  const blue = parseInt(full.slice(4, 6), 16);
+  const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
+  return luminance <= 40;
+}
+
+function averagePoints(points: LandmarkPoint[]) {
+  if (points.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  return points.reduce(
+    (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
+    { x: 0, y: 0 }
+  );
+}
+
+function getFaceBounds(lm: LandmarkPoint[]) {
+  let minX = 1;
+  let minY = 1;
+  let maxX = 0;
+  let maxY = 0;
+
+  for (const point of lm) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function smoothLandmarks(previous: LandmarkPoint[] | null, next: LandmarkPoint[], alpha = LIVE_LANDMARK_ALPHA) {
+  if (!previous || previous.length !== next.length) {
+    return next.map((point) => ({ ...point }));
+  }
+
+  return next.map((point, index) => {
+    const prev = previous[index];
+    if (!prev) {
+      return { ...point };
+    }
+
+    return {
+      x: prev.x * alpha + point.x * (1 - alpha),
+      y: prev.y * alpha + point.y * (1 - alpha),
+      z: typeof prev.z === 'number' || typeof point.z === 'number'
+        ? (prev.z ?? 0) * alpha + (point.z ?? 0) * (1 - alpha)
+        : undefined,
+    };
+  });
+}
+
+function getIrisGeometry(lm: LandmarkPoint[], indices: number[], fallbackIndices: number[]) {
+  const irisPoints = indices.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  if (irisPoints.length >= 3) {
+    const center = averagePoints(irisPoints);
+    const radius = irisPoints.reduce((maxRadius, point) => {
+      const dx = point.x - center.x;
+      const dy = point.y - center.y;
+      return Math.max(maxRadius, Math.hypot(dx, dy));
+    }, 0);
+
+    return { center, radius: Math.max(radius * 0.82, 0.006) };
+  }
+
+  const fallbackPoints = fallbackIndices.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  if (fallbackPoints.length === 0) {
+    return null;
+  }
+
+  const bounds = fallbackPoints.reduce(
+    (acc, point) => ({
+      minX: Math.min(acc.minX, point.x),
+      minY: Math.min(acc.minY, point.y),
+      maxX: Math.max(acc.maxX, point.x),
+      maxY: Math.max(acc.maxY, point.y),
+    }),
+    { minX: 1, minY: 1, maxX: 0, maxY: 0 }
+  );
+
+  const center = {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+  };
+  const radius = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.22;
+
+  return { center, radius: Math.max(radius, 0.008) };
+}
+
+function getEyeBounds(lm: LandmarkPoint[], path: number[]) {
+  const points = path.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  if (points.length < 3) {
+    return null;
+  }
+
+  const bounds = points.reduce(
+    (acc, point) => ({
+      minX: Math.min(acc.minX, point.x),
+      minY: Math.min(acc.minY, point.y),
+      maxX: Math.max(acc.maxX, point.x),
+      maxY: Math.max(acc.maxY, point.y),
+    }),
+    { minX: 1, minY: 1, maxX: 0, maxY: 0 }
+  );
+
+  return {
+    center: {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+    },
+    width: bounds.maxX - bounds.minX,
+    height: bounds.maxY - bounds.minY,
+  };
+}
+
+function drawPath(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], path: number[], W: number, H: number) {
+  const points = path.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  if (points.length < 2) {
+    return;
+  }
+
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const x = point.x * W;
+    const y = point.y * H;
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      const prev = points[index - 1];
+      const midX = (prev.x * W + x) / 2;
+      const midY = (prev.y * H + y) / 2;
+      ctx.quadraticCurveTo(prev.x * W, prev.y * H, midX, midY);
+    }
+  });
+}
+
+function fillPath(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], path: number[], W: number, H: number) {
+  drawPath(ctx, lm, path, W, H);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function strokePath(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], path: number[], W: number, H: number) {
+  drawPath(ctx, lm, path, W, H);
+  ctx.stroke();
+}
+
+function drawBrowMakeup(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
+  const face = getFaceBounds(lm);
+  const lift = face.height * (0.013 + intensity * 0.008);
+  const thickness = face.height * (0.014 + intensity * 0.010);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = hexToRgba(color, 0.45 + intensity * 0.22);
+  ctx.strokeStyle = hexToRgba(color, 0.80);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const path of MAKEUP_PATHS.brow) {
+    const basePoints = path.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+    if (basePoints.length < 3) {
+      continue;
+    }
+
+    ctx.beginPath();
+    basePoints.forEach((point, index) => {
+      const x = point.x * W;
+      const y = point.y * H;
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        const prev = basePoints[index - 1];
+        ctx.quadraticCurveTo(prev.x * W, prev.y * H, (prev.x * W + x) / 2, (prev.y * H + y) / 2);
+      }
+    });
+
+    for (let i = basePoints.length - 1; i >= 0; i--) {
+      const point = basePoints[i];
+      const liftFactor = lift + Math.sin((i / Math.max(1, basePoints.length - 1)) * Math.PI) * thickness * 0.45;
+      const x = point.x * W;
+      const y = point.y * H - liftFactor;
+      if (i === basePoints.length - 1) {
+        ctx.lineTo(x, y);
+      } else {
+        const prev = basePoints[i + 1];
+        const prevLift = lift + Math.sin(((i + 1) / Math.max(1, basePoints.length - 1)) * Math.PI) * thickness * 0.45;
+        ctx.quadraticCurveTo((prev.x * W + x) / 2, ((prev.y * H - prevLift) + y) / 2, x, y);
+      }
+    }
+
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.globalAlpha = 0.30 + intensity * 0.28;
+    ctx.lineWidth = 1.4 + intensity * 1.6;
+    strokePath(ctx, lm, path, W, H);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+function drawEyeColor(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
+  const eyes = [
+    { iris: IRIS_LEFT, fallback: MAKEUP_PATHS.eye[0], pupil: 468 },
+    { iris: IRIS_RIGHT, fallback: MAKEUP_PATHS.eye[1], pupil: 473 },
+  ];
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+
+  for (const [index, eye] of eyes.entries()) {
+    const iris = getIrisGeometry(lm, eye.iris, eye.fallback);
+    const eyeBounds = getEyeBounds(lm, eye.fallback);
+    if (!iris || !eyeBounds) {
+      continue;
+    }
+
+    const darkIris = isVeryDarkHex(color);
+
+    const eyeShift = index === 0 ? -0.012 : -0.034;
+    const cx = clamp(
+      iris.center.x + eyeShift,
+      eyeBounds.center.x - eyeBounds.width * 0.10,
+      eyeBounds.center.x + eyeBounds.width * 0.18,
+    ) * W;
+    const cy = clamp(iris.center.y, eyeBounds.center.y - eyeBounds.height * 0.18, eyeBounds.center.y + eyeBounds.height * 0.18) * H;
+    const irisRadius = iris.radius * Math.min(W, H) * (darkIris ? 1.74 + intensity * 0.08 : 1.58 + intensity * 0.10);
+    const eyeCap = Math.min(eyeBounds.width * W * (darkIris ? 0.34 : 0.30), eyeBounds.height * H * (darkIris ? 0.48 : 0.44));
+    const outerRadius = Math.max(4, Math.min(irisRadius, eyeCap));
+    const innerRadius = Math.max(2, outerRadius * (darkIris ? 0.07 + intensity * 0.008 : 0.10 + intensity * 0.010));
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, outerRadius, outerRadius * 1.02, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, innerRadius, innerRadius * 1.02, 0, 0, Math.PI * 2);
+    ctx.clip('evenodd');
+
+    const ring = ctx.createRadialGradient(cx, cy, innerRadius * 0.85, cx, cy, outerRadius);
+    ring.addColorStop(0, 'rgba(0,0,0,0)');
+    ring.addColorStop(0.22, hexToRgba(color, darkIris ? 0.38 + intensity * 0.08 : 0.26 + intensity * 0.08));
+    ring.addColorStop(0.58, hexToRgba(color, darkIris ? 0.90 + intensity * 0.04 : 0.72 + intensity * 0.06));
+    ring.addColorStop(1, hexToRgba(color, darkIris ? 0.99 : 0.96));
+
+    ctx.globalCompositeOperation = darkIris ? 'source-over' : 'soft-light';
+    ctx.globalAlpha = darkIris ? 0.90 : 0.96;
+    ctx.fillStyle = ring;
+    ctx.fillRect(cx - outerRadius, cy - outerRadius, outerRadius * 2, outerRadius * 2);
+
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function fillLipMakeup(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number) {
+  const outerLip = MAKEUP_PATHS.lip[0];
+  const innerMouth = MAKEUP_PATHS.lip[1];
+
+  ctx.beginPath();
+  drawPath(ctx, lm, outerLip, W, H);
+  ctx.closePath();
+
+  const innerPoints = innerMouth.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  if (innerPoints.length > 0) {
+    innerPoints
+      .slice()
+      .reverse()
+      .forEach((point, index) => {
+        const x = point.x * W;
+        const y = point.y * H;
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          const prev = innerPoints[innerPoints.length - index];
+          ctx.lineTo((prev.x * W + x) / 2, (prev.y * H + y) / 2);
+        }
+      });
+    ctx.closePath();
+  }
+
+  ctx.fill('evenodd');
+}
+
+function drawMakeup(
+  ctx: CanvasRenderingContext2D,
+  lm: LandmarkPoint[],
+  W: number,
+  H: number,
+  target: MakeupTarget,
+  color: string,
+  intensity: number,
+) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  if (target === 'brow') {
+    drawBrowMakeup(ctx, lm, W, H, color, intensity);
+    ctx.restore();
+    return;
+  }
+
+  if (target === 'eye') {
+    drawEyeColor(ctx, lm, W, H, color, intensity);
+    ctx.restore();
+    return;
+  }
+
+  if (target === 'lash') {
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = Math.min(0.82, 0.26 + intensity * 0.52);
+    ctx.strokeStyle = hexToRgba(color, 0.88);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1.2 + intensity * 2.0;
+    for (const path of MAKEUP_PATHS.lash) {
+      strokePath(ctx, lm, path, W, H);
+    }
+    ctx.restore();
+    return;
+  }
+
+  ctx.globalCompositeOperation = target === 'teeth' ? 'screen' : 'soft-light';
+  ctx.fillStyle = hexToRgba(color, target === 'teeth' ? 0.52 : 0.62);
+  ctx.strokeStyle = hexToRgba(color, 0.72);
+  ctx.globalAlpha = Math.min(0.66, 0.16 + intensity * 0.52);
+
+  if (target === 'lip') {
+    fillLipMakeup(ctx, lm, W, H);
+  } else {
+    for (const path of MAKEUP_PATHS[target]) {
+      fillPath(ctx, lm, path, W, H);
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawAgingOverlay(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, intensity: number) {
+  const face = getFaceBounds(lm);
+  const faceCx = ((face.minX + face.maxX) / 2) * W;
+  const faceCy = ((face.minY + face.maxY) / 2) * H;
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'multiply';
+
+  const faceGlow = ctx.createRadialGradient(faceCx, faceCy * 0.96, 0, faceCx, faceCy, Math.max(faceW, faceH) * 0.55);
+  faceGlow.addColorStop(0, `rgba(118, 76, 45, ${0.03 + intensity * 0.05})`);
+  faceGlow.addColorStop(0.72, `rgba(92, 56, 34, ${0.02 + intensity * 0.03})`);
+  faceGlow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = faceGlow;
+  ctx.beginPath();
+  ctx.ellipse(faceCx, faceCy, faceW * 0.43, faceH * 0.49, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.strokeStyle = `rgba(74, 42, 28, ${0.10 + intensity * 0.18})`;
+  ctx.lineWidth = 0.7 + intensity * 1.0;
+  ctx.lineCap = 'round';
+
+  const wrinkleSets = [
+    [70, 63, 105, 107, 65],
+    [300, 293, 334, 336, 295],
+    [33, 160, 158, 133],
+    [263, 387, 385, 362],
+    [205, 187, 147, 123],
+    [425, 411, 376, 352],
+  ];
+
+  wrinkleSets.forEach((path, index) => {
+    ctx.globalAlpha = clamp(0.08 + intensity * 0.14 - index * 0.012, 0.04, 0.28);
+    strokePath(ctx, lm, path, W, H);
+  });
+
+  const cheekSpots = [50, 101, 118, 280, 330, 347];
+  cheekSpots.forEach((idx, index) => {
+    const point = lm[idx];
+    if (!point) return;
+
+    const radius = (faceW + faceH) * (0.004 + intensity * 0.0025) * (1 + index * 0.15);
+    ctx.globalAlpha = 0.08 + intensity * 0.09;
+    ctx.fillStyle = index % 2 === 0 ? 'rgba(105, 64, 43, 0.8)' : 'rgba(88, 52, 32, 0.7)';
+    ctx.beginPath();
+    ctx.arc(point.x * W, point.y * H, radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
+function drawDeagingOverlay(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, intensity: number) {
+  const face = getFaceBounds(lm);
+  const faceCx = ((face.minX + face.maxX) / 2) * W;
+  const faceCy = ((face.minY + face.maxY) / 2) * H;
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'screen';
+
+  const glows = [
+    { x: faceCx, y: faceCy * 0.88, rx: faceW * 0.26, ry: faceH * 0.16, alpha: 0.06 + intensity * 0.04 },
+    { x: faceCx - faceW * 0.12, y: faceCy * 1.02, rx: faceW * 0.18, ry: faceH * 0.12, alpha: 0.05 + intensity * 0.03 },
+    { x: faceCx + faceW * 0.12, y: faceCy * 1.02, rx: faceW * 0.18, ry: faceH * 0.12, alpha: 0.05 + intensity * 0.03 },
+    { x: faceCx, y: faceCy * 1.14, rx: faceW * 0.24, ry: faceH * 0.14, alpha: 0.04 + intensity * 0.03 },
+  ];
+
+  for (const glow of glows) {
+    const grad = ctx.createRadialGradient(glow.x, glow.y, 0, glow.x, glow.y, Math.max(glow.rx, glow.ry));
+    grad.addColorStop(0, `rgba(255, 236, 229, ${glow.alpha})`);
+    grad.addColorStop(0.65, `rgba(255, 236, 229, ${glow.alpha * 0.32})`);
+    grad.addColorStop(1, 'rgba(255, 236, 229, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(glow.x, glow.y, glow.rx, glow.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
 type LiveWarpCameraProps = {
   onCapture?: (dataUrl: string, width: number, height: number) => void;
   isDark?: boolean;
@@ -183,11 +670,19 @@ type LiveWarpCameraProps = {
 export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCameraProps) {
   const videoRef = useRef<any>(null);
   const canvasRef = useRef<any>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const agingPreviewImageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<any>(null);
   const landmarkerRef = useRef<any>(null);
   const rafRef = useRef<number | null>(null);
   const fpsTimeRef = useRef<number>(performance.now());
   const fpsCountRef = useRef<number>(0);
+  const lastDetectionAtRef = useRef<number>(0);
+  const lastPreviewRequestAtRef = useRef<number>(0);
+  const lastPreviewStartAtRef = useRef<number>(0);
+  const previewRequestIdRef = useRef<number>(0);
+  const previewInFlightRef = useRef(false);
+  const lastFaceSeenAtRef = useRef<number>(0);
 
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState('Hazır. Başlat butonuna bas.');
@@ -197,10 +692,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(PRO_PRESET_VALUES.balanced.intensity);
   const [proSmooth, setProSmooth] = useState(PRO_PRESET_VALUES.balanced.smooth);
+  const [proLabEnabled, setProLabEnabled] = useState(true);
   const [makeupTarget, setMakeupTarget] = useState<MakeupTarget>('lip');
-  const [makeupColor, setMakeupColor] = useState(MAKEUP_PRESETS[0].defaultColor);
-  const [makeupIntensity, setMakeupIntensity] = useState(0.48);
-  const [makeupEnabled, setMakeupEnabled] = useState(true);
+  const [makeupProfiles, setMakeupProfiles] = useState<Record<MakeupTarget, MakeupProfile>>(DEFAULT_MAKEUP_PROFILE);
+  const [makeupEnabled, setMakeupEnabled] = useState(false);
 
   const [intensities, setIntensities] = useState<Record<EffectId, number>>({
     smile: 0,
@@ -210,17 +705,30 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   });
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operation: proOperation, intensity: proIntensity, smooth: proSmooth });
-  const makeupRef = useRef({ target: makeupTarget, color: makeupColor, intensity: makeupIntensity, enabled: makeupEnabled });
+  const proLabEnabledRef = useRef(proLabEnabled);
+  const makeupRef = useRef({ target: makeupTarget, profiles: makeupProfiles, enabled: makeupEnabled });
   const showLandmarksRef = useRef(showLandmarks);
+  const smoothedLandmarksRef = useRef<LandmarkPoint[] | null>(null);
 
   useEffect(() => { intensitiesRef.current = intensities; }, [intensities]);
   useEffect(() => {
     proRef.current = { operation: proOperation, intensity: proIntensity, smooth: proSmooth };
   }, [proOperation, proIntensity, proSmooth]);
   useEffect(() => {
-    makeupRef.current = { target: makeupTarget, color: makeupColor, intensity: makeupIntensity, enabled: makeupEnabled };
-  }, [makeupTarget, makeupColor, makeupIntensity, makeupEnabled]);
+    proLabEnabledRef.current = proLabEnabled;
+  }, [proLabEnabled]);
+  useEffect(() => {
+    makeupRef.current = { target: makeupTarget, profiles: makeupProfiles, enabled: makeupEnabled };
+  }, [makeupTarget, makeupProfiles, makeupEnabled]);
   useEffect(() => { showLandmarksRef.current = showLandmarks; }, [showLandmarks]);
+
+  useEffect(() => {
+    if (!proLabEnabled || (proOperation !== 'aging' && proOperation !== 'deaging')) {
+      agingPreviewImageRef.current = null;
+      previewInFlightRef.current = false;
+      lastPreviewStartAtRef.current = 0;
+    }
+  }, [proLabEnabled, proOperation]);
 
   const init = async () => {
     if (landmarkerRef.current) return;
@@ -259,17 +767,117 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     if (canvas.width !== W) canvas.width = W;
     if (canvas.height !== H) canvas.height = H;
 
-    const result = landmarker.detectForVideo(video, performance.now());
-    const lm = result.faceLandmarks?.[0];
-
+    const now = performance.now();
     const pro = proRef.current;
+    const proEnabled = proLabEnabledRef.current;
+    const agingMode = proEnabled && (pro.operation === 'aging' || pro.operation === 'deaging');
+    const agingInterval = pro.operation === 'deaging' ? LIVE_DEAGING_INTERVAL_MS : LIVE_AGING_INTERVAL_MS;
+
+    if (agingMode && previewInFlightRef.current && now - lastPreviewStartAtRef.current > LIVE_AGING_TIMEOUT_MS) {
+      previewInFlightRef.current = false;
+      lastPreviewStartAtRef.current = 0;
+      previewRequestIdRef.current += 1;
+    }
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.filter = getLiveFilter(pro.operation, pro.intensity);
+
+    if (agingMode) {
+      if (agingPreviewImageRef.current) {
+        ctx.drawImage(agingPreviewImageRef.current, 0, 0, W, H);
+      } else {
+        ctx.drawImage(video, 0, 0, W, H);
+      }
+
+      if (!previewInFlightRef.current && now - lastPreviewRequestAtRef.current > agingInterval) {
+        lastPreviewRequestAtRef.current = now;
+        previewInFlightRef.current = true;
+        lastPreviewStartAtRef.current = now;
+
+        const previewCanvas = previewCanvasRef.current ?? document.createElement('canvas');
+        previewCanvasRef.current = previewCanvas;
+        const previewWidth = pro.operation === 'deaging'
+          ? Math.min(256, Math.max(192, Math.round(W * 0.28)))
+          : Math.min(256, Math.max(192, Math.round(W * 0.30)));
+        const previewHeight = pro.operation === 'deaging'
+          ? Math.min(256, Math.max(192, Math.round((H / Math.max(1, W)) * previewWidth)))
+          : Math.min(256, Math.max(192, Math.round((H / Math.max(1, W)) * previewWidth)));
+        previewCanvas.width = previewWidth;
+        previewCanvas.height = previewHeight;
+
+        const previewCtx = previewCanvas.getContext('2d');
+        if (previewCtx) {
+          previewCtx.setTransform(1, 0, 0, 1, 0, 0);
+          previewCtx.drawImage(video, 0, 0, previewWidth, previewHeight);
+          const requestId = ++previewRequestIdRef.current;
+
+          previewCanvas.toBlob((blob) => {
+            void (async () => {
+              try {
+                if (!blob) return;
+                const previewBase64 = await blobToBase64(blob);
+
+                const data = await frequencyProFromBase64(previewBase64, pro.operation, pro.intensity, {
+                  landmarkBackend: 'hybrid',
+                  temporalSmoothing: false,
+                  emaAlpha: 0.5,
+                  streamId: 'live-pro-aging',
+                });
+
+                if (requestId !== previewRequestIdRef.current || !data?.success || !data.result_image_b64) {
+                  return;
+                }
+
+                const image = new Image();
+                image.onload = () => {
+                  if (requestId !== previewRequestIdRef.current) {
+                    return;
+                  }
+
+                  agingPreviewImageRef.current = image;
+                };
+                image.src = `data:image/png;base64,${data.result_image_b64}`;
+              } catch {
+                // Keep the current frame if the backend preview misses.
+              } finally {
+                if (requestId === previewRequestIdRef.current) {
+                  previewInFlightRef.current = false;
+                  lastPreviewStartAtRef.current = 0;
+                }
+              }
+            })();
+          }, 'image/jpeg', 0.5);
+        } else {
+          previewInFlightRef.current = false;
+          lastPreviewStartAtRef.current = 0;
+        }
+      }
+      return;
+    }
+
+    let lm = smoothedLandmarksRef.current;
+    if (!lm || now - lastDetectionAtRef.current >= LIVE_DETECT_INTERVAL_MS) {
+      const result = landmarker.detectForVideo(video, now);
+      const detected = result.faceLandmarks?.[0] ?? null;
+      lastDetectionAtRef.current = now;
+
+      if (detected) {
+        lm = smoothLandmarks(smoothedLandmarksRef.current, detected);
+        smoothedLandmarksRef.current = lm;
+        lastFaceSeenAtRef.current = now;
+      } else if (lastFaceSeenAtRef.current && now - lastFaceSeenAtRef.current > 420) {
+        lm = null;
+        smoothedLandmarksRef.current = null;
+      }
+    }
+
+    ctx.filter = proEnabled ? getLiveFilter(pro.operation, pro.intensity) : 'none';
     ctx.drawImage(video, 0, 0, W, H);
     ctx.filter = 'none';
 
     if (!lm) {
-      setMessage('Yüz aranıyor...');
+      if (now - lastFaceSeenAtRef.current > 420) {
+        setMessage('Yüz aranıyor...');
+      }
       return;
     }
 
@@ -296,7 +904,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       }
     });
 
-    if (controls.length > 0) {
+    if (proEnabled && controls.length > 0 && pro.operation !== 'aging' && pro.operation !== 'deaging') {
       let minX = 1, maxX = 0, minY = 1, maxY = 0;
       for (const p of lm) {
         if (p.x < minX) minX = p.x;
@@ -354,15 +962,14 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       }
     }
 
-    if (pro.operation === 'aging') {
-      drawAgingOverlay(ctx, lm, W, H, pro.intensity);
-    } else if (pro.operation === 'deaging') {
-      drawDeagingOverlay(ctx, lm, W, H, pro.intensity);
-    }
-
     const makeup = makeupRef.current;
-    if (makeup.enabled && makeup.intensity > 0.005) {
-      drawMakeup(ctx, lm, W, H, makeup.target, makeup.color, makeup.intensity);
+    if (makeup.enabled) {
+      (Object.keys(makeup.profiles) as MakeupTarget[]).forEach((target) => {
+        const profile = makeup.profiles[target];
+        if (profile.active && profile.intensity > 0.005) {
+          drawMakeup(ctx, lm, W, H, target, profile.color, profile.intensity);
+        }
+      });
     }
 
     if (showLandmarksRef.current) {
@@ -376,10 +983,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     }
 
     fpsCountRef.current += 1;
-    const now = performance.now();
-    if (now - fpsTimeRef.current > 800) {
-      const f = (fpsCountRef.current * 1000) / (now - fpsTimeRef.current);
-      fpsTimeRef.current = now;
+    const fpsNow = performance.now();
+    if (fpsNow - fpsTimeRef.current > 800) {
+      const f = (fpsCountRef.current * 1000) / (fpsNow - fpsTimeRef.current);
+      fpsTimeRef.current = fpsNow;
       fpsCountRef.current = 0;
       setFps(Math.round(f));
       setMessage(`Yüz tespit ✔ • ${lm.length} landmark`);
@@ -445,9 +1052,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     setProIntensity(PRO_PRESET_VALUES.balanced.intensity);
     setProSmooth(PRO_PRESET_VALUES.balanced.smooth);
     setMakeupTarget('lip');
-    setMakeupColor(MAKEUP_PRESETS[0].defaultColor);
-    setMakeupIntensity(0.48);
-    setMakeupEnabled(true);
+    setMakeupProfiles(DEFAULT_MAKEUP_PROFILE);
+    setMakeupEnabled(false);
+    agingPreviewImageRef.current = null;
+    smoothedLandmarksRef.current = null;
   };
 
   const applyPreset = (preset: ProPreset) => {
@@ -555,7 +1163,17 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
               </Pressable>
             </View>
 
-            <Text style={[styles.sectionLabel, { color: muted }]}>PRO LAB</Text>
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionLabel, { color: muted }]}>PRO LAB</Text>
+              <Pressable
+                onPress={() => setProLabEnabled((value) => !value)}
+                style={[
+                  styles.miniSwitch,
+                  { backgroundColor: proLabEnabled ? accent : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
+                ]}>
+                <View style={[styles.miniSwitchThumb, proLabEnabled ? styles.miniSwitchThumbOn : null]} />
+              </Pressable>
+            </View>
             <View style={styles.operationGrid}>
               {PRO_OPERATIONS.map((operation) => {
                 const active = proOperation === operation;
@@ -664,14 +1282,21 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
             <View style={styles.makeupGrid}>
               {MAKEUP_PRESETS.map((preset) => {
-                const active = makeupTarget === preset.key;
+                const profile = makeupProfiles[preset.key];
+                const active = profile.active;
                 return (
                   <Pressable
                     key={preset.key}
                     onPress={() => {
-                      setMakeupTarget(preset.key);
-                      setMakeupColor(preset.defaultColor);
-                      setMakeupEnabled(true);
+                      setMakeupTarget((current) => (current === preset.key ? current : preset.key));
+                      setMakeupProfiles((current) => ({
+                        ...current,
+                        [preset.key]: {
+                          ...current[preset.key],
+                          active: !current[preset.key].active,
+                          color: current[preset.key].color || preset.defaultColor,
+                        },
+                      }));
                     }}
                     style={[
                       styles.makeupButton,
@@ -689,13 +1314,20 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
             <View style={styles.swatchRow}>
               {(MAKEUP_SWATCHES[makeupTarget] ?? []).map((swatch) => {
-                const active = makeupColor.toUpperCase() === swatch.toUpperCase();
+                const profile = makeupProfiles[makeupTarget];
+                const active = profile.active && profile.color.toUpperCase() === swatch.toUpperCase();
                 return (
                   <Pressable
                     key={swatch}
                     onPress={() => {
-                      setMakeupColor(swatch);
-                      setMakeupEnabled(true);
+                      setMakeupProfiles((current) => ({
+                        ...current,
+                        [makeupTarget]: {
+                          ...current[makeupTarget],
+                          active: !(current[makeupTarget].active && current[makeupTarget].color.toUpperCase() === swatch.toUpperCase()),
+                          color: swatch,
+                        },
+                      }));
                     }}
                     style={[
                       styles.swatchButton,
@@ -713,13 +1345,19 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
             <View style={styles.sliderBlock}>
               <View style={styles.sliderHeader}>
                 <Text style={[styles.sliderLabel, { color: text }]}>Makeup Intensity</Text>
-                <Text style={[styles.sliderValue, { color: muted }]}>{Math.round(makeupIntensity * 100)}%</Text>
+                <Text style={[styles.sliderValue, { color: muted }]}>{Math.round(makeupProfiles[makeupTarget].intensity * 100)}%</Text>
               </View>
               <Slider
-                value={makeupIntensity}
+                value={makeupProfiles[makeupTarget].intensity}
                 onValueChange={(value) => {
-                  setMakeupIntensity(value);
-                  setMakeupEnabled(true);
+                  setMakeupProfiles((current) => ({
+                    ...current,
+                    [makeupTarget]: {
+                      ...current[makeupTarget],
+                      active: true,
+                      intensity: value,
+                    },
+                  }));
                 }}
                 minimumValue={0}
                 maximumValue={1}
@@ -798,146 +1436,6 @@ function getLiveFilter(operation: ProLiveOperation, intensity: number) {
   }
 
   return 'none';
-}
-
-function drawAgingOverlay(ctx: CanvasRenderingContext2D, lm: any[], W: number, H: number, intensity: number) {
-  const alpha = 0.08 + intensity * 0.18;
-  const drawLine = (indices: number[], width = 1) => {
-    ctx.beginPath();
-    indices.forEach((idx, index) => {
-      const p = lm[idx];
-      if (!p) return;
-      if (index === 0) ctx.moveTo(p.x * W, p.y * H);
-      else ctx.lineTo(p.x * W, p.y * H);
-    });
-    ctx.strokeStyle = `rgba(25,18,14,${alpha})`;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  };
-
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  drawLine([10, 338, 297, 332, 284], 1 + intensity);
-  drawLine([10, 109, 67, 103, 54], 1 + intensity);
-  drawLine([50, 101, 118, 117, 123], 0.8 + intensity * 0.8);
-  drawLine([280, 330, 347, 346, 352], 0.8 + intensity * 0.8);
-  drawLine([205, 187, 147, 123], 0.8 + intensity * 0.8);
-  drawLine([425, 411, 376, 352], 0.8 + intensity * 0.8);
-  ctx.restore();
-}
-
-function drawDeagingOverlay(ctx: CanvasRenderingContext2D, lm: any[], W: number, H: number, intensity: number) {
-  let minX = 1, maxX = 0, minY = 1, maxY = 0;
-  for (const p of lm) {
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minY = Math.min(minY, p.y);
-    maxY = Math.max(maxY, p.y);
-  }
-
-  const x = minX * W;
-  const y = minY * H;
-  const width = (maxX - minX) * W;
-  const height = (maxY - minY) * H;
-
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 0.05 + intensity * 0.08;
-  ctx.fillStyle = '#FFE7F2';
-  ctx.beginPath();
-  ctx.ellipse(x + width / 2, y + height * 0.48, width * 0.42, height * 0.34, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-function drawMakeup(
-  ctx: CanvasRenderingContext2D,
-  lm: any[],
-  W: number,
-  H: number,
-  target: MakeupTarget,
-  color: string,
-  intensity: number,
-) {
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = target === 'lash' || target === 'brow' ? 'multiply' : 'soft-light';
-  ctx.fillStyle = color;
-  ctx.strokeStyle = color;
-
-  if (target === 'lash' || target === 'brow') {
-    ctx.globalAlpha = Math.min(0.82, 0.25 + intensity * 0.55);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = target === 'lash' ? 1.2 + intensity * 2.2 : 3 + intensity * 4;
-    for (const path of MAKEUP_PATHS[target]) {
-      strokeLandmarkPath(ctx, lm, path, W, H);
-    }
-  } else {
-    ctx.globalAlpha = Math.min(0.62, 0.12 + intensity * 0.48);
-    if (target === 'lip') {
-      fillLipMakeup(ctx, lm, W, H);
-    } else {
-      for (const path of MAKEUP_PATHS[target]) {
-        fillLandmarkPath(ctx, lm, path, W, H);
-      }
-    }
-  }
-
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-function fillLipMakeup(ctx: CanvasRenderingContext2D, lm: any[], W: number, H: number) {
-  const outerLip = MAKEUP_PATHS.lip[0];
-  const innerMouth = MAKEUP_PATHS.lip[1];
-
-  ctx.beginPath();
-  outerLip.forEach((idx, index) => {
-    const p = lm[idx];
-    if (!p) return;
-    if (index === 0) ctx.moveTo(p.x * W, p.y * H);
-    else ctx.lineTo(p.x * W, p.y * H);
-  });
-  ctx.closePath();
-
-  innerMouth
-    .slice()
-    .reverse()
-    .forEach((idx, index) => {
-      const p = lm[idx];
-      if (!p) return;
-      if (index === 0) ctx.moveTo(p.x * W, p.y * H);
-      else ctx.lineTo(p.x * W, p.y * H);
-    });
-  ctx.closePath();
-  ctx.fill('evenodd');
-}
-
-function fillLandmarkPath(ctx: CanvasRenderingContext2D, lm: any[], path: number[], W: number, H: number) {
-  ctx.beginPath();
-  path.forEach((idx, index) => {
-    const p = lm[idx];
-    if (!p) return;
-    if (index === 0) ctx.moveTo(p.x * W, p.y * H);
-    else ctx.lineTo(p.x * W, p.y * H);
-  });
-  ctx.closePath();
-  ctx.fill();
-}
-
-function strokeLandmarkPath(ctx: CanvasRenderingContext2D, lm: any[], path: number[], W: number, H: number) {
-  ctx.beginPath();
-  path.forEach((idx, index) => {
-    const p = lm[idx];
-    if (!p) return;
-    if (index === 0) ctx.moveTo(p.x * W, p.y * H);
-    else ctx.lineTo(p.x * W, p.y * H);
-  });
-  ctx.stroke();
 }
 
 const styles = StyleSheet.create({
