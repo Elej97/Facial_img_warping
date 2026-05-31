@@ -1,6 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+type LandmarkPoint = { x: number; y: number; z?: number };
+
+const DETECT_INTERVAL_MS = 80;
+const SMOOTH_ALPHA = 0.72;
+
+const smoothLandmarks = (previous: LandmarkPoint[] | null, next: LandmarkPoint[]) => {
+  if (!previous || previous.length !== next.length) {
+    return next.map((point) => ({ ...point }));
+  }
+
+  return next.map((point, index) => {
+    const prev = previous[index];
+    if (!prev) {
+      return { ...point };
+    }
+
+    return {
+      x: prev.x * SMOOTH_ALPHA + point.x * (1 - SMOOTH_ALPHA),
+      y: prev.y * SMOOTH_ALPHA + point.y * (1 - SMOOTH_ALPHA),
+      z: typeof prev.z === 'number' || typeof point.z === 'number'
+        ? (prev.z ?? 0) * SMOOTH_ALPHA + (point.z ?? 0) * (1 - SMOOTH_ALPHA)
+        : undefined,
+    };
+  });
+};
+
 export default function WebRealtimeFace() {
   const videoRef = useRef<any>(null);
   const canvasRef = useRef<any>(null);
@@ -9,8 +35,10 @@ export default function WebRealtimeFace() {
   const rafRef = useRef<number | null>(null);
 
   const lastFrameRef = useRef<any>(null);
-  const lastPointsRef = useRef<any[] | null>(null);
+  const lastPointsRef = useRef<LandmarkPoint[] | null>(null);
   const lastSizeRef = useRef({ width: 800, height: 450 });
+  const lastDetectAtRef = useRef(0);
+  const lastSeenAtRef = useRef(0);
 
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState('Hazır');
@@ -100,17 +128,30 @@ export default function WebRealtimeFace() {
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(video, 0, 0, width, height);
 
-    const result = landmarker.detectForVideo(video, performance.now());
-    const points = result.faceLandmarks?.[0] ?? null;
+    const now = performance.now();
+    let points = lastPointsRef.current;
+
+    if (!points || now - lastDetectAtRef.current >= DETECT_INTERVAL_MS) {
+      const result = landmarker.detectForVideo(video, now);
+      const detected = result.faceLandmarks?.[0] ?? null;
+      lastDetectAtRef.current = now;
+
+      if (detected) {
+        points = smoothLandmarks(lastPointsRef.current, detected);
+        lastPointsRef.current = points;
+        lastSeenAtRef.current = now;
+      } else if (now - lastSeenAtRef.current > 400) {
+        points = null;
+        lastPointsRef.current = null;
+      }
+    }
 
     lastFrameRef.current = video;
 
     if (points) {
-      lastPointsRef.current = points;
       drawLandmarks(ctx, points, width, height);
       setMessage(`✔ ${points.length} landmark`);
     } else {
-      lastPointsRef.current = null;
       setMessage('Yüz aranıyor...');
     }
   };
