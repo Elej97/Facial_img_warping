@@ -310,6 +310,7 @@ export default function CreateScreen() {
   const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [selectedImageB64, setSelectedImageB64] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('Henüz görsel seçilmedi.');
   const [processState, setProcessState] = useState<ProcessState>('idle');
   const [cropApplied, setCropApplied] = useState(false);
@@ -343,7 +344,7 @@ export default function CreateScreen() {
   const [manualLipWarpError, setManualLipWarpError] = useState<string | null>(null);
 
   const [landmarkBackend, setLandmarkBackend] = useState<'mediapipe' | 'dlib' | 'hybrid'>('hybrid');
-  const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
+  const [activeProOperations, setActiveProOperations] = useState<ProOperation[]>(['smile_enhancement']);
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(0.65);
   const [proRbfSmooth, setProRbfSmooth] = useState(2.8);
@@ -862,6 +863,7 @@ export default function CreateScreen() {
     setSelectedImageName(name);
     setSelectedImageUri(dataUrl);
     setSelectedImageSize({ width: w, height: h });
+    setSelectedImageB64(dataUrl);
     setProcessState('selected');
     setStatusMessage(`Canlı yakalama hazır: ${w}x${h}.`);
     setCropApplied(false);
@@ -872,54 +874,148 @@ export default function CreateScreen() {
     void runAgeAnalysis(dataUrl, 'before', 'uri');
   };
 
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.4,  // Daha düşük çözünürlük (çok hızlı işleme)
-      allowsEditing: false,
-      selectionLimit: 1,
-      base64: Platform.OS === 'web',
-    });
-
-    if (result.canceled || result.assets.length === 0) {
-      return;
-    }
-
-    const asset = result.assets[0];
-    const rawName = asset.fileName ?? asset.uri.split('/').pop() ?? 'secilen_gorsel';
-    const mimeType = (asset.mimeType ?? '').toLowerCase();
-    const isImageMime = mimeType === '' || mimeType.startsWith('image/');
-
-    if (!isImageMime) {
-      setSelectedImageName(null);
-      setSelectedImageUri(null);
-      setSelectedImageSize(null);
-      setProcessState('error');
-      setStatusMessage('Lütfen geçerli bir görsel dosyası seçin.');
-      return;
-    }
-
-    if ((asset.width ?? 0) < MIN_WIDTH || (asset.height ?? 0) < MIN_HEIGHT) {
-      setSelectedImageName(null);
-      setSelectedImageUri(null);
-      setSelectedImageSize(null);
-      setProcessState('error');
-      setStatusMessage(`Minimum çözünürlük ${MIN_WIDTH}x${MIN_HEIGHT} olmalı. Seçilen: ${asset.width}x${asset.height}.`);
-      return;
-    }
-
-    setSelectedImageName(rawName);
-    setSelectedImageUri(toWebImageUri(asset));
-    setSelectedImageSize({ width: asset.width ?? MIN_WIDTH, height: asset.height ?? MIN_HEIGHT });
+  const applySelectedImage = (name: string, uri: string, size: { width: number; height: number }, imageB64: string | null = null) => {
+    setSelectedImageName(name);
+    setSelectedImageUri(uri);
+    setSelectedImageSize(size);
+    setSelectedImageB64(imageB64);
     setProcessState('selected');
-    setStatusMessage(`Seçilen görsel hazır: ${asset.width}x${asset.height}.`);
+    setStatusMessage(`Seçilen görsel hazır: ${size.width}x${size.height}.`);
     setCropApplied(false);
     resetExpressionTransferState();
     resetAgeAnalysis();
     setMakeupResultB64(null);
     setMakeupError(null);
     closeCropEditor();
-    void runAgeAnalysis(asset.uri, 'before', 'uri');
+    void runAgeAnalysis(uri, 'before', 'uri');
+  };
+
+  const readWebImageFile = (file: File) => {
+    const objectUrl = URL.createObjectURL(file);
+    const reader = new FileReader();
+    const image = document.createElement('img');
+    let imageB64: string | null = null;
+    let imageSize: { width: number; height: number } | null = null;
+
+    const finishSelection = () => {
+      if (!imageB64 || !imageSize) {
+        return;
+      }
+
+      applySelectedImage(file.name || 'secilen_gorsel', objectUrl, imageSize, imageB64);
+    };
+
+    image.onload = () => {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+
+      if (width < MIN_WIDTH || height < MIN_HEIGHT) {
+        URL.revokeObjectURL(objectUrl);
+        setSelectedImageName(null);
+        setSelectedImageUri(null);
+        setSelectedImageSize(null);
+        setSelectedImageB64(null);
+        setProcessState('error');
+        setStatusMessage(`Minimum çözünürlük ${MIN_WIDTH}x${MIN_HEIGHT} olmalı. Seçilen: ${width}x${height}.`);
+        return;
+      }
+
+      imageSize = { width, height };
+      finishSelection();
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      setProcessState('error');
+      setStatusMessage('Görsel yüklenemedi. Lütfen başka bir fotoğraf seçin.');
+    };
+
+    reader.onload = () => {
+      imageB64 = typeof reader.result === 'string' ? reader.result : null;
+      finishSelection();
+    };
+
+    reader.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      setProcessState('error');
+      setStatusMessage('Dosya okunamadı. Lütfen başka bir fotoğraf seçin.');
+    };
+
+    reader.readAsDataURL(file);
+    image.src = objectUrl;
+  };
+
+  const pickImage = async () => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.style.position = 'fixed';
+      input.style.left = '-10000px';
+      input.style.top = '0';
+
+      input.onchange = () => {
+        const file = input.files?.[0];
+        document.body.removeChild(input);
+        if (file) {
+          readWebImageFile(file);
+        }
+      };
+
+      input.oncancel = () => {
+        document.body.removeChild(input);
+      };
+
+      document.body.appendChild(input);
+      input.click();
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+        allowsEditing: false,
+        selectionLimit: 1,
+        base64: true,
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      const rawName = asset.fileName ?? asset.uri.split('/').pop() ?? 'secilen_gorsel';
+      const mimeType = (asset.mimeType ?? '').toLowerCase();
+      const isImageMime = mimeType === '' || mimeType.startsWith('image/');
+
+      if (!isImageMime) {
+        setSelectedImageName(null);
+        setSelectedImageUri(null);
+        setSelectedImageSize(null);
+        setSelectedImageB64(null);
+        setProcessState('error');
+        setStatusMessage('Lütfen geçerli bir görsel dosyası seçin.');
+        return;
+      }
+
+      if ((asset.width ?? 0) < MIN_WIDTH || (asset.height ?? 0) < MIN_HEIGHT) {
+        setSelectedImageName(null);
+        setSelectedImageUri(null);
+        setSelectedImageSize(null);
+        setSelectedImageB64(null);
+        setProcessState('error');
+        setStatusMessage(`Minimum çözünürlük ${MIN_WIDTH}x${MIN_HEIGHT} olmalı. Seçilen: ${asset.width}x${asset.height}.`);
+        return;
+      }
+
+      const imageB64 = asset.base64 ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}` : null;
+      applySelectedImage(rawName, asset.uri, { width: asset.width ?? MIN_WIDTH, height: asset.height ?? MIN_HEIGHT }, imageB64);
+    } catch (error) {
+      console.error('Fotoğraf seçme hatası:', error);
+      setProcessState('error');
+      setStatusMessage('Fotoğraf seçme hatası. Lütfen tekrar deneyin.');
+    }
   };
 
   const pickReferenceExpressionImage = async () => {
@@ -1007,6 +1103,7 @@ export default function CreateScreen() {
 
       setSelectedImageUri(result.uri);
       setSelectedImageSize({ width: result.width ?? Math.round(cropWidth), height: result.height ?? Math.round(cropHeight) });
+      setSelectedImageB64(null);
       setCropApplied(true);
       setProcessState('selected');
       setMakeupResultB64(null);
@@ -1114,7 +1211,8 @@ export default function CreateScreen() {
     setManualLipWarpError(null);
 
     try {
-      const transferData = await transferExpressionFromBase64(preprocessedB64, referenceExpressionUri, expressionTransferIntensity, {
+      const effectSourceB64 = selectedImageB64 ?? preprocessedB64;
+      const transferData = await transferExpressionFromBase64(effectSourceB64, referenceExpressionUri, expressionTransferIntensity, {
         landmarkBackend,
       });
 
@@ -1127,7 +1225,7 @@ export default function CreateScreen() {
       void runAgeAnalysis(transferData.result_image_b64, 'after', 'base64');
 
       try {
-        const baselineData = await warpProFromBase64(preprocessedB64, 'lip_plump', expressionTransferIntensity, 2.8, { landmarkBackend });
+        const baselineData = await warpProFromBase64(effectSourceB64, 'lip_plump', expressionTransferIntensity, 2.8, { landmarkBackend });
         if (baselineData.success) {
           setManualLipWarpResultB64(baselineData.result_image_b64);
         } else {
@@ -1147,8 +1245,22 @@ export default function CreateScreen() {
 
   const runProOperation = useCallback(async (override?: { intensity?: number; rbfSmooth?: number; operation?: ProOperation }) => {
     if (!preprocessedB64) return;
+    const operations = override?.operation ? [override.operation] : activeProOperations;
+    if (operations.length === 0) {
+      setProResultB64(null);
+      setEvalResultB64(null);
+      setProMetrics(null);
+      setEvalMetrics(null);
+      return;
+    }
 
-    const effectiveOperation = override?.operation ?? proOperation;
+    let effectSourceB64 = selectedImageB64 ?? preprocessedB64;
+    let lastMetrics: ProMetrics | null = null;
+    let lastSourceLabel: string | null = null;
+    let lastSpectrumGray: string | null = null;
+    let lastSpectrumBlue: string | null = null;
+    let lastSpectrumRed: string | null = null;
+
     const effectiveIntensity = override?.intensity ?? proIntensity;
     const effectiveRbfSmooth = override?.rbfSmooth ?? proRbfSmooth;
 
@@ -1157,49 +1269,54 @@ export default function CreateScreen() {
     setProLoading(true);
     setProError(null);
     try {
-      if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
-        const data = await frequencyProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, {
-          landmarkBackend,
-          temporalSmoothing: true,
-          emaAlpha: 0.62,
-          streamId: 'pro-ui',
-        });
-        if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
-        setProResultB64(data.result_image_b64);
-        setProMetrics(data.metrics ?? null);
-        setEvalMetrics(data.metrics ?? null);
-        setEvalSourceLabel(data.mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
-        setEvalResultB64(data.result_image_b64 ?? null);
-        setSpectrumGrayB64(data.spectrum_gray_b64 ?? null);
-        setSpectrumBlueB64(data.spectrum_blue_b64 ?? null);
-        setSpectrumRedB64(data.spectrum_red_b64 ?? null);
-        setAgeAfter(null);
-        void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
-      } else {
-        const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
-          landmarkBackend,
-          temporalSmoothing: true,
-          emaAlpha: 0.62,
-          streamId: 'pro-ui',
-        });
-        if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
-        setProResultB64(data.result_image_b64);
-        setProMetrics(data.metrics ?? null);
-        setEvalMetrics(data.metrics ?? null);
-        setEvalSourceLabel(`Pro Warp / ${PRO_LABEL[effectiveOperation]}`);
-        setEvalResultB64(data.result_image_b64 ?? null);
-        setSpectrumGrayB64(null);
-        setSpectrumBlueB64(null);
-        setSpectrumRedB64(null);
-        setAgeAfter(null);
-        void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
+      for (const effectiveOperation of operations) {
+        if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
+          const data = await frequencyProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, {
+            landmarkBackend,
+            temporalSmoothing: true,
+            emaAlpha: 0.62,
+            streamId: 'pro-ui',
+          });
+          if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
+          effectSourceB64 = data.result_image_b64;
+          lastMetrics = data.metrics ?? null;
+          lastSourceLabel = data.mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging';
+          lastSpectrumGray = data.spectrum_gray_b64 ?? null;
+          lastSpectrumBlue = data.spectrum_blue_b64 ?? null;
+          lastSpectrumRed = data.spectrum_red_b64 ?? null;
+        } else {
+          const data = await warpProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
+            landmarkBackend,
+            temporalSmoothing: true,
+            emaAlpha: 0.62,
+            streamId: 'pro-ui',
+          });
+          if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
+          effectSourceB64 = data.result_image_b64;
+          lastMetrics = data.metrics ?? null;
+          lastSourceLabel = `Pro Warp / ${operations.map((operation) => PRO_LABEL[operation]).join(' + ')}`;
+          lastSpectrumGray = null;
+          lastSpectrumBlue = null;
+          lastSpectrumRed = null;
+        }
       }
+
+      setProResultB64(effectSourceB64);
+      setProMetrics(lastMetrics);
+      setEvalMetrics(lastMetrics);
+      setEvalSourceLabel(lastSourceLabel);
+      setEvalResultB64(effectSourceB64);
+      setSpectrumGrayB64(lastSpectrumGray);
+      setSpectrumBlueB64(lastSpectrumBlue);
+      setSpectrumRedB64(lastSpectrumRed);
+      setAgeAfter(null);
+      void runAgeAnalysis(effectSourceB64, 'after', 'base64');
     } catch (e: any) {
       setProError(e?.message ?? 'Unknown pro error');
     } finally {
       setProLoading(false);
     }
-  }, [landmarkBackend, preprocessedB64, proIntensity, proOperation, proRbfSmooth, runAgeAnalysis]);
+  }, [activeProOperations, landmarkBackend, preprocessedB64, proIntensity, proRbfSmooth, runAgeAnalysis, selectedImageB64]);
 
   const applyMakeup = async () => {
     if (!preprocessedB64) return;
@@ -1207,8 +1324,8 @@ export default function CreateScreen() {
     const preset = MANUAL_MAKEUP_PRESETS.find((item) => item.key === makeupTarget) ?? MANUAL_MAKEUP_PRESETS[0];
     const hexColor = normalizeHexColor(makeupHexColor, preset.defaultColor);
     
-    // Use last layer result if available, else use preprocessed image
-    const baseImageB64 = makeupLayers.length > 0 ? makeupLayers[makeupLayers.length - 1].resultB64 : preprocessedB64;
+    // Use last layer result if available, else preserve the selected image dimensions.
+    const baseImageB64 = makeupLayers.length > 0 ? makeupLayers[makeupLayers.length - 1].resultB64 : (selectedImageB64 ?? preprocessedB64);
 
     setMakeupLoading(true);
     setMakeupError(null);
@@ -1251,6 +1368,7 @@ export default function CreateScreen() {
       setAccessoryResultB64(null);
       return;
     }
+    const effectSourceB64 = selectedImageB64 ?? preprocessedB64;
 
     const preset = ACCESSORY_PRESETS.find((item) => item.key === accessoryTarget) ?? ACCESSORY_PRESETS[0];
     const style = preset.styles.some((item) => item.key === accessoryStyle) ? accessoryStyle : preset.defaultStyle;
@@ -1260,7 +1378,7 @@ export default function CreateScreen() {
 
     try {
       const data = await applyAccessoryFromBase64(
-        preprocessedB64,
+        effectSourceB64,
         preset.key,
         style,
         preset.defaultColor,
@@ -1296,6 +1414,7 @@ export default function CreateScreen() {
     accessoryTarget,
     landmarkBackend,
     preprocessedB64,
+    selectedImageB64,
   ]);
 
   const applyProPreset = (preset: ProPreset) => {
@@ -1304,6 +1423,14 @@ export default function CreateScreen() {
     setProIntensity(values.intensity);
     setProRbfSmooth(values.rbfSmooth);
     // State changes above trigger the useEffect debounce — no direct call needed.
+  };
+
+  const toggleProOperation = (operation: ProOperation) => {
+    setActiveProOperations((current) =>
+      current.includes(operation)
+        ? current.filter((item) => item !== operation)
+        : [...current, operation]
+    );
   };
 
   useEffect(() => {
@@ -1343,13 +1470,14 @@ export default function CreateScreen() {
         clearTimeout(proDebounceRef.current);
       }
     };
-  }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth, runProOperation]);
+  }, [activeProOperations, preprocessedB64, proIntensity, proRbfSmooth, runProOperation]);
 
   const applyProLayer = async () => {
     // Run pro operation once and add to layers
     if (!preprocessedB64) return;
+    if (activeProOperations.length === 0) return;
+    const effectSourceB64 = selectedImageB64 ?? preprocessedB64;
 
-    const effectiveOperation = proOperation;
     const effectiveIntensity = proIntensity;
     const effectiveRbfSmooth = proRbfSmooth;
 
@@ -1357,31 +1485,34 @@ export default function CreateScreen() {
     setProError(null);
     try {
       let resultB64: string | null = null;
-      
-      if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
-        const data = await frequencyProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, {
-          landmarkBackend,
-          temporalSmoothing: true,
-          emaAlpha: 0.62,
-          streamId: 'pro-ui',
-        });
-        if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
-        resultB64 = data.result_image_b64;
-      } else {
-        const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
-          landmarkBackend,
-          temporalSmoothing: true,
-          emaAlpha: 0.62,
-          streamId: 'pro-ui',
-        });
-        if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
-        resultB64 = data.result_image_b64;
+      let workingB64 = effectSourceB64;
+      for (const effectiveOperation of activeProOperations) {
+        if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
+          const data = await frequencyProFromBase64(workingB64, effectiveOperation, effectiveIntensity, {
+            landmarkBackend,
+            temporalSmoothing: true,
+            emaAlpha: 0.62,
+            streamId: 'pro-ui',
+          });
+          if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
+          workingB64 = data.result_image_b64;
+        } else {
+          const data = await warpProFromBase64(workingB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
+            landmarkBackend,
+            temporalSmoothing: true,
+            emaAlpha: 0.62,
+            streamId: 'pro-ui',
+          });
+          if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
+          workingB64 = data.result_image_b64;
+        }
       }
+      resultB64 = workingB64;
 
       if (resultB64) {
         const newLayer: ProLayer = {
           id: `${Date.now()}-${Math.random()}`,
-          operation: effectiveOperation,
+          operation: activeProOperations[0],
           intensity: effectiveIntensity,
           preset: proPreset,
           resultB64,
@@ -1408,7 +1539,7 @@ export default function CreateScreen() {
       const data = await exportEvaluationReportFromBase64(
         'csv',
         evalSourceLabel ?? 'Unknown Operation',
-        preprocessedB64,
+        selectedImageB64 ?? preprocessedB64,
         evalResultB64,
         { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
       );
@@ -1431,7 +1562,7 @@ export default function CreateScreen() {
       const data = await exportEvaluationReportFromBase64(
         'pdf',
         evalSourceLabel ?? 'Unknown Operation',
-        preprocessedB64,
+        selectedImageB64 ?? preprocessedB64,
         evalResultB64,
         { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
       );
@@ -1448,6 +1579,7 @@ export default function CreateScreen() {
     setSelectedImageName(null);
     setSelectedImageUri(null);
     setSelectedImageSize(null);
+    setSelectedImageB64(null);
     setStatusMessage('Henüz görsel seçilmedi.');
     setProcessState('idle');
     setCropApplied(false);
@@ -1465,6 +1597,7 @@ export default function CreateScreen() {
     setProError(null);
     setProResultB64(null);
     setProMetrics(null);
+    setActiveProOperations(['smile_enhancement']);
     setEvalMetrics(null);
     setEvalSourceLabel(null);
     setEvalResultB64(null);
@@ -1638,79 +1771,7 @@ export default function CreateScreen() {
           </View>
         ) : (
         <View style={[styles.workspace, isWide && styles.workspaceWide]}>
-          <View
-            style={[
-              styles.panel,
-              styles.uploadPanel,
-              {
-                backgroundColor: panelBackground,
-                borderColor: panelBorder,
-                flex: currentResultB64 ? 0.6 : 0.9,
-              },
-            ]}>
-            <View style={styles.panelTitleRow}>
-              <View style={[styles.panelTitleDot, { backgroundColor: accent }]} />
-              <ThemedText type="subtitle" style={styles.panelTitle}>Görsel Kaynağı</ThemedText>
-            </View>
-            <ThemedText style={styles.helperText}>
-              Fotoğrafını seçip merkez önizlemede kırpma işlemini yapabilirsin.
-            </ThemedText>
-
-            <Pressable
-              style={[
-                styles.uploadDropzone,
-                {
-                  borderColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.30)',
-                  backgroundColor: colorScheme === 'dark' ? 'rgba(255,255,255,0.035)' : 'rgba(139,92,246,0.045)',
-                },
-              ]}
-              onPress={pickImage}>
-              <View style={[styles.uploadIconBubble, { backgroundColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.16)' : 'rgba(139,92,246,0.12)' }]}>
-                <Ionicons name="image-outline" size={28} color={accent} />
-              </View>
-              <ThemedText style={styles.uploadDropzoneTitle}>Fotoğraf Seç</ThemedText>
-              <ThemedText style={[styles.uploadDropzoneHint, { color: mutedText }]}>Net bir portre yükleyin</ThemedText>
-            </Pressable>
-            <Pressable
-              onPress={() => setMode('live')}
-              style={{
-                marginTop: 10,
-                padding: 12,
-                backgroundColor: 'rgba(160,32,240,0.12)',
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: 'rgba(160,32,240,0.35)',
-                alignItems: 'center',
-                flexDirection: 'row',
-                justifyContent: 'center',
-                gap: 8,
-              }}>
-              <Ionicons name="videocam-outline" size={16} color="#A020F0" />
-              <Text style={{ color: '#A020F0', fontWeight: '700' }}>
-                Anlık Kamera Modunu Aç
-              </Text>
-            </Pressable>
-
-            <View style={styles.statusRow}>
-              <Ionicons
-                name={processState === 'error' ? 'alert-circle-outline' : 'information-circle-outline'}
-                size={18}
-                color={colors.text}
-              />
-              <ThemedText style={styles.statusText}>{statusMessage}</ThemedText>
-            </View>
-
-            {selectedImageName ? (
-              <View style={styles.fileCard}>
-                <ThemedText type="defaultSemiBold">Seçilen Dosya</ThemedText>
-                <ThemedText style={styles.fileText}>{selectedImageName}</ThemedText>
-                <ThemedText style={styles.fileText}>
-                  {selectedImageSize ? `${selectedImageSize.width} x ${selectedImageSize.height}` : 'Boyut bilinmiyor'}
-                </ThemedText>
-              </View>
-            ) : null}
-          </View>
-
+          {/* SOL PANEL - ORIJINAL FOTOĞRAF + SEÇME BUTONU */}
           <View
             style={[
               styles.panel,
@@ -1718,59 +1779,63 @@ export default function CreateScreen() {
               {
                 backgroundColor: previewBackground,
                 borderColor: panelBorder,
-                flex: currentResultB64 ? 3.5 : 1.2,
+                flex: 1,
+                padding: 12,
               },
+              Platform.OS === 'web' ? ({ order: 2 } as any) : null,
             ]}>
-            <View style={styles.canvasHeader}>
-              <View style={styles.panelTitleRow}>
-                <Ionicons name="scan-outline" size={16} color={accent} />
-                <ThemedText type="subtitle" style={styles.panelTitle}>Kanvas</ThemedText>
-              </View>
-              <View style={[styles.liveBadge, { backgroundColor: softSurface }]}>
-                <ThemedText style={styles.liveBadgeText}>Live Preview</ThemedText>
-              </View>
-            </View>
             {selectedImageUri ? (
-              <View style={[styles.previewBox, currentResultB64 ? { flexDirection: 'row', gap: 16, maxWidth: '100%', aspectRatio: 2 } : {}]}>
-                <View style={{ flex: 1, height: '100%', position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
-                  <Image source={{ uri: selectedImageUri }} style={[styles.previewImage, { width: '100%', height: '100%' }]} contentFit="contain" />
-                  <View style={styles.previewBadge}>
-                    <ThemedText style={styles.previewBadgeText}>{currentResultB64 ? 'Önceki (Orijinal)' : 'Fotoğraf Ortada'}</ThemedText>
-                  </View>
+              <View style={{ flex: 1, position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+                <Image source={{ uri: selectedImageUri }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
+                <View style={styles.previewBadge}>
+                  <ThemedText style={styles.previewBadgeText}>Önceki</ThemedText>
                 </View>
-
-                {currentResultB64 ? (
-                  <View style={{ flex: 1, height: '100%', position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
-                    <Image source={{ uri: `data:image/png;base64,${currentResultB64}` }} style={[styles.previewImage, { width: '100%', height: '100%' }]} contentFit="contain" />
-                    <View style={[styles.previewBadge, { backgroundColor: 'rgba(160,32,240,0.8)' }]}>
-                      <ThemedText style={styles.previewBadgeText}>Sonraki (Efektli)</ThemedText>
-                    </View>
-                  </View>
-                ) : null}
               </View>
             ) : (
-              <View style={styles.emptyPreview}>
-                <Ionicons name="image-outline" size={40} color={colors.text} />
-                <ThemedText style={styles.helperText}>Fotoğraf seçince burada ortada görünecek.</ThemedText>
-              </View>
-            )}
-
-            <View style={styles.previewActions}>
               <Pressable
                 style={[
-                  styles.iconActionButton,
-                  { backgroundColor: softSurface, borderColor: colors.tint },
+                  styles.uploadDropzone,
+                  {
+                    flex: 1,
+                    borderColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.30)',
+                    backgroundColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.08)' : 'rgba(139,92,246,0.06)',
+                  },
                 ]}
-                onPress={cropImage}
-                disabled={!selectedImageUri}>
-                <Ionicons name="crop-outline" size={18} color={colors.tint} />
-                <ThemedText style={[styles.iconActionText, { color: colors.tint }]}>Kırp</ThemedText>
+                onPress={pickImage}>
+                <View style={[styles.uploadIconBubble, { backgroundColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.16)' : 'rgba(139,92,246,0.12)' }]}>
+                  <Ionicons name="image-outline" size={40} color={accent} />
+                </View>
+                <ThemedText style={[styles.uploadDropzoneTitle, { color: accent }]}>Fotoğraf Seç</ThemedText>
               </Pressable>
+            )}
+          </View>
 
-              <View style={styles.cropHintPill}>
-                <ThemedText style={styles.cropHintText}>{cropApplied ? 'Kırpma uygulandı' : 'Kırpma bekliyor'}</ThemedText>
+          {/* SAĞDA PANEL - SONUÇ FOTOĞRAF */}
+          <View
+            style={[
+              styles.panel,
+              styles.previewPanel,
+              {
+                backgroundColor: previewBackground,
+                borderColor: panelBorder,
+                flex: 1,
+                padding: 12,
+              },
+              Platform.OS === 'web' ? ({ order: 3 } as any) : null,
+            ]}>
+            {selectedImageUri && currentResultB64 ? (
+              <View style={{ flex: 1, position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+                <Image source={{ uri: `data:image/png;base64,${currentResultB64}` }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
+                <View style={[styles.previewBadge, { backgroundColor: 'rgba(160,32,240,0.8)' }]}>
+                  <ThemedText style={styles.previewBadgeText}>Sonraki</ThemedText>
+                </View>
               </View>
-            </View>
+            ) : (
+              <View style={[styles.emptyPreview, { backgroundColor: softSurface }]}>
+                <Ionicons name="sparkles-outline" size={32} color={colors.text} />
+                <ThemedText style={styles.helperText}>Efekt beklemede</ThemedText>
+              </View>
+            )}
           </View>
 
           <View
@@ -1785,6 +1850,7 @@ export default function CreateScreen() {
                 overflow: 'hidden',
                 minWidth: 360,
               },
+              Platform.OS === 'web' ? ({ order: 1 } as any) : null,
             ]}>
             
             {/* Vertical Toolbar */}
@@ -2011,25 +2077,30 @@ export default function CreateScreen() {
               <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>4</Text></View>
               <ThemedText type="defaultSemiBold">Pro Lab (Canlı)</ThemedText>
             </View>
-            <ThemedText style={styles.helperText}>Operasyon: {PRO_LABEL[proOperation]}</ThemedText>
+            <ThemedText style={styles.helperText}>
+              Operasyon: {activeProOperations.length > 0 ? activeProOperations.map((operation) => PRO_LABEL[operation]).join(' + ') : 'Kapalı'}
+            </ThemedText>
             <View style={styles.warpGrid}>
-              {PRO_OPERATIONS.map((op) => (
-                <Pressable
-                  key={op}
-                  style={[
-                    styles.warpOpButton,
-                    {
-                      backgroundColor: proOperation === op ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
-                      opacity: preprocessedB64 ? 1 : 0.4,
-                    },
-                  ]}
-                  onPress={() => setProOperation(op)}
-                  disabled={!preprocessedB64}>
-                  <ThemedText style={[styles.warpOpText, { color: proOperation === op ? tintTextColor : colors.text }]}>
-                    {PRO_LABEL[op]}
-                  </ThemedText>
-                </Pressable>
-              ))}
+              {PRO_OPERATIONS.map((op) => {
+                const isActive = activeProOperations.includes(op);
+                return (
+                  <Pressable
+                    key={op}
+                    style={[
+                      styles.warpOpButton,
+                      {
+                        backgroundColor: isActive ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                        opacity: preprocessedB64 ? 1 : 0.4,
+                      },
+                    ]}
+                    onPress={() => toggleProOperation(op)}
+                    disabled={!preprocessedB64}>
+                    <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
+                      {PRO_LABEL[op]}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
             </View>
 
             <View style={styles.presetRow}>
@@ -2081,9 +2152,9 @@ export default function CreateScreen() {
             />
 
             <Pressable
-              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.5 }]}
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 && activeProOperations.length > 0 ? 1 : 0.5 }]}
               onPress={applyProLayer}
-              disabled={!preprocessedB64 || proLoading}>
+              disabled={!preprocessedB64 || activeProOperations.length === 0 || proLoading}>
               <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Uygula Pro Efekti</ThemedText>
             </Pressable>
 
@@ -2898,6 +2969,7 @@ export default function CreateScreen() {
           </View>
         </View>
       </Modal>
+
     </StudioScreen>
   );
 }
@@ -3044,7 +3116,7 @@ const styles = StyleSheet.create({
   previewPanel: {
     flex: 1.22,
     minWidth: 360,
-    alignItems: 'center',
+    alignItems: 'stretch',
   },
   featurePanel: {
     flex: 1.04,
@@ -3080,6 +3152,8 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   uploadDropzone: {
+    width: '100%',
+    alignSelf: 'stretch',
     minHeight: 176,
     borderRadius: 24,
     borderWidth: 1,
@@ -3088,6 +3162,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
     padding: 18,
+  },
+  uploadDropzoneSmall: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
   },
   uploadIconBubble: {
     width: 58,
@@ -3099,6 +3185,10 @@ const styles = StyleSheet.create({
   uploadDropzoneTitle: {
     fontSize: 15,
     fontWeight: '900',
+  },
+  uploadDropzoneTitleSmall: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   uploadDropzoneHint: {
     fontSize: 12,

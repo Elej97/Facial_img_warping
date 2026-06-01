@@ -692,6 +692,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const [showLandmarks, setShowLandmarks] = useState(false);
   const [fps, setFps] = useState(0);
   const [proOperation, setProOperation] = useState<ProLiveOperation>('smile_enhancement');
+  const [activeProOperations, setActiveProOperations] = useState<ProLiveOperation[]>([]);
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(0);
   const [proSmooth, setProSmooth] = useState(PRO_PRESET_VALUES.balanced.smooth);
@@ -708,7 +709,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   });
   const [splitScreen, setSplitScreen] = useState(true);
   const intensitiesRef = useRef(intensities);
-  const proRef = useRef({ operation: proOperation, intensity: proIntensity, smooth: proSmooth });
+  const proRef = useRef({ operation: proOperation, operations: activeProOperations, intensity: proIntensity, smooth: proSmooth });
   const proLabEnabledRef = useRef(proLabEnabled);
   const makeupRef = useRef({ target: makeupTarget, profiles: makeupProfiles, enabled: makeupEnabled });
   const showLandmarksRef = useRef(showLandmarks);
@@ -716,8 +717,8 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   useEffect(() => { intensitiesRef.current = intensities; }, [intensities]);
   useEffect(() => {
-    proRef.current = { operation: proOperation, intensity: proIntensity, smooth: proSmooth };
-  }, [proOperation, proIntensity, proSmooth]);
+    proRef.current = { operation: proOperation, operations: activeProOperations, intensity: proIntensity, smooth: proSmooth };
+  }, [activeProOperations, proOperation, proIntensity, proSmooth]);
   useEffect(() => {
     proLabEnabledRef.current = proLabEnabled;
   }, [proLabEnabled]);
@@ -727,12 +728,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   useEffect(() => { showLandmarksRef.current = showLandmarks; }, [showLandmarks]);
 
   useEffect(() => {
-    if (!proLabEnabled || (proOperation !== 'aging' && proOperation !== 'deaging')) {
+    if (!proLabEnabled || !activeProOperations.some((operation) => operation === 'aging' || operation === 'deaging')) {
       agingPreviewImageRef.current = null;
       previewInFlightRef.current = false;
       lastPreviewStartAtRef.current = 0;
     }
-  }, [proLabEnabled, proOperation]);
+  }, [activeProOperations, proLabEnabled]);
 
   const init = async () => {
     if (landmarkerRef.current) return;
@@ -775,15 +776,11 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     const now = performance.now();
     const pro = proRef.current;
     const proEnabled = proLabEnabledRef.current;
-    const agingOperation: 'aging' | 'deaging' | null = proEnabled
-      ? pro.operation === 'aging'
-        ? 'aging'
-        : pro.operation === 'deaging'
-          ? 'deaging'
-          : null
+    const agingOperation = proEnabled
+      ? (pro.operations.find((operation) => operation === 'aging' || operation === 'deaging') as 'aging' | 'deaging' | undefined) ?? null
       : null;
     const agingMode = agingOperation !== null;
-    const agingInterval = pro.operation === 'deaging' ? LIVE_DEAGING_INTERVAL_MS : LIVE_AGING_INTERVAL_MS;
+    const agingInterval = agingOperation === 'deaging' ? LIVE_DEAGING_INTERVAL_MS : LIVE_AGING_INTERVAL_MS;
 
     if (agingMode && previewInFlightRef.current && now - lastPreviewStartAtRef.current > LIVE_AGING_TIMEOUT_MS) {
       previewInFlightRef.current = false;
@@ -798,7 +795,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
         if (agingPreviewImageRef.current) {
           ctx.drawImage(agingPreviewImageRef.current, 0, 0, W, H);
         } else {
-          ctx.filter = getLiveFilter(pro.operation, pro.intensity);
+          ctx.filter = getLiveFilter(agingOperation, pro.intensity);
           ctx.drawImage(video, 0, 0, W, H);
           ctx.filter = 'none';
         }
@@ -806,7 +803,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       } else if (agingPreviewImageRef.current) {
         ctx.drawImage(agingPreviewImageRef.current, 0, 0, W, H);
       } else {
-        ctx.filter = getLiveFilter(pro.operation, pro.intensity);
+        ctx.filter = getLiveFilter(agingOperation, pro.intensity);
         ctx.drawImage(video, 0, 0, W, H);
         ctx.filter = 'none';
       }
@@ -818,10 +815,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
         const previewCanvas = previewCanvasRef.current ?? document.createElement('canvas');
         previewCanvasRef.current = previewCanvas;
-        const previewWidth = pro.operation === 'deaging'
+        const previewWidth = agingOperation === 'deaging'
           ? Math.min(168, Math.max(128, Math.round(W * 0.18)))
           : Math.min(180, Math.max(128, Math.round(W * 0.20)));
-        const previewHeight = pro.operation === 'deaging'
+        const previewHeight = agingOperation === 'deaging'
           ? Math.min(180, Math.max(96, Math.round((H / Math.max(1, W)) * previewWidth)))
           : Math.min(192, Math.max(96, Math.round((H / Math.max(1, W)) * previewWidth)));
         previewCanvas.width = previewWidth;
@@ -900,15 +897,15 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       ctx.filter = 'none';
       ctx.drawImage(video, 0, 0, W, H);
       // Sağ taraf: efektli kamera (başlangıç)
-      ctx.filter = proEnabled ? getLiveFilter(pro.operation, pro.intensity) : 'none';
+      ctx.filter = 'none';
       ctx.drawImage(video, W, 0, W, H);
       ctx.filter = 'none';
-      ctx.filter = proEnabled ? getLiveFilter(pro.operation, pro.intensity) : 'none';
+      ctx.filter = 'none';
       ctx.drawImage(video, 0, 0, W, H);
       ctx.filter = 'none';
       ctx.drawImage(video, W, 0, W, H);
     } else {
-      ctx.filter = proEnabled ? getLiveFilter(pro.operation, pro.intensity) : 'none';
+      ctx.filter = 'none';
       ctx.drawImage(video, 0, 0, W, H);
       ctx.filter = 'none';
     }
@@ -921,10 +918,14 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     }
 
     const cur = intensitiesRef.current;
-    const activeEffect = PRO_EFFECT_MAP[pro.operation];
     const liveEffects: Record<EffectId, number> = { ...cur };
-    if (activeEffect && proEnabled) {
-      liveEffects[activeEffect] = Math.max(liveEffects[activeEffect], pro.intensity);
+    if (proEnabled) {
+      for (const operation of pro.operations) {
+        const activeEffect = PRO_EFFECT_MAP[operation];
+        if (activeEffect) {
+          liveEffects[activeEffect] = Math.max(liveEffects[activeEffect], pro.intensity);
+        }
+      }
     }
 
     const controls: { effect: EffectId; sx: number; sy: number; dxn: number; dyn: number; spread: number }[] = [];
@@ -945,7 +946,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       }
     });
 
-    if (controls.length > 0 && (proEnabled ? pro.operation !== 'aging' && pro.operation !== 'deaging' : true)) {
+    if (controls.length > 0 && !agingMode) {
       let minX = 1, maxX = 0, minY = 1, maxY = 0;
       for (const p of lm) {
         if (p.x < minX) minX = p.x;
@@ -1130,6 +1131,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const resetSliders = () => {
     setIntensities({ smile: 0, slim: 0, brow: 0, lip: 0 });
     setProOperation('smile_enhancement');
+    setActiveProOperations([]);
     setProPreset('balanced');
     setProIntensity(0);
     setProSmooth(PRO_PRESET_VALUES.balanced.smooth);
@@ -1142,14 +1144,20 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   const applyPreset = (preset: ProPreset) => {
     setProPreset(preset);
-    setProLabEnabled(true);
+    setProLabEnabled(activeProOperations.length > 0);
     setProIntensity(PRO_PRESET_VALUES[preset].intensity);
     setProSmooth(PRO_PRESET_VALUES[preset].smooth);
   };
 
   const activateProOperation = (operation: ProLiveOperation) => {
     setProOperation(operation);
-    setProLabEnabled(true);
+    setActiveProOperations((current) => {
+      const next = current.includes(operation)
+        ? current.filter((item) => item !== operation)
+        : [...current, operation];
+      setProLabEnabled(next.length > 0);
+      return next;
+    });
     setProIntensity((value) => (value > 0.005 ? value : PRO_PRESET_VALUES[proPreset].intensity));
   };
 
@@ -1157,7 +1165,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     setProLabEnabled((enabled) => {
       const nextEnabled = !enabled;
       if (nextEnabled) {
+        setActiveProOperations((current) => (current.length > 0 ? current : [proOperation]));
         setProIntensity((value) => (value > 0.005 ? value : PRO_PRESET_VALUES[proPreset].intensity));
+      } else {
+        setActiveProOperations([]);
       }
       return nextEnabled;
     });
@@ -1212,7 +1223,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   return (
     <View style={styles.container}>
       <View style={styles.layout}>
-        <View style={[styles.stage, { backgroundColor: '#000', borderColor: panelBorder }]}>
+        <View style={[styles.stage, { backgroundColor: '#000', borderColor: panelBorder }, Platform.OS === 'web' ? ({ order: 2 } as any) : null]}>
           {/* @ts-ignore */}
           <video ref={videoRef} style={{ display: 'none' }} muted playsInline />
           {/* @ts-ignore */}
@@ -1239,7 +1250,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
           </View>
         </View>
 
-        <View style={[styles.controls, { backgroundColor: panelBg, borderColor: panelBorder }]}>
+        <View style={[styles.controls, { backgroundColor: panelBg, borderColor: panelBorder }, Platform.OS === 'web' ? ({ order: 1 } as any) : null]}>
           <View style={[styles.actionRow, { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: panelBorder }]}>
             <Pressable
               onPress={running ? stop : start}
@@ -1298,7 +1309,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
             </View>
             <View style={styles.operationGrid}>
               {PRO_OPERATIONS.map((operation) => {
-                const active = proLabEnabled && proOperation === operation;
+                const active = proLabEnabled && activeProOperations.includes(operation);
                 return (
                   <Pressable
                     key={operation}
