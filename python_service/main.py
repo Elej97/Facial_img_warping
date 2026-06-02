@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -7,6 +8,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from startup_check import warn_missing_ai_dependencies
+
+
+def _parse_allowed_origins() -> list[str]:
+    """
+    ALLOWED_ORIGINS env değişkeninden izin verilen origin listesini okur.
+
+    Örnekler (.env dosyasında):
+        ALLOWED_ORIGINS=*                                          → geliştirme
+        ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
+        ALLOWED_ORIGINS=https://facemorphapp.com,https://www.facemorphapp.com
+
+    Değişken tanımlı değilse geliştirme modunda çalışır (["*"]).
+    """
+    raw = os.environ.get("ALLOWED_ORIGINS", "").strip()
+    if not raw or raw == "*":
+        return ["*"]
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins if origins else ["*"]
+
+
+_ALLOWED_ORIGINS = _parse_allowed_origins()
 
 try:
     from deepface import DeepFace
@@ -92,9 +114,10 @@ app = FastAPI(title="Facial CV Service")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=_ALLOWED_ORIGINS != ["*"],  # credentials sadece spesifik origin'lerde
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 
