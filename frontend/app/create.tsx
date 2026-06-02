@@ -30,6 +30,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     accessoryAssetUrl,
     applyAccessoryFromBase64,
+    applyHairColorFromBase64,
     applyMakeupFromBase64,
     estimateAgeFromBase64,
     estimateAgeFromUri,
@@ -392,6 +393,14 @@ export default function CreateScreen() {
   };
   
   const [makeupLayers, setMakeupLayers] = useState<MakeupLayer[]>([]);
+
+  // --- Hair Color state ---
+  const [hairColorHex, setHairColorHex] = useState('#3b1f0f');
+  const [hairColorIntensity, setHairColorIntensity] = useState(0.85);
+  const [hairColorLoading, setHairColorLoading] = useState(false);
+  const [hairColorError, setHairColorError] = useState<string | null>(null);
+  const [hairColorResultB64, setHairColorResultB64] = useState<string | null>(null);
+
   const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
   const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
   const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
@@ -1360,6 +1369,25 @@ export default function CreateScreen() {
       setMakeupError(error?.message ?? 'Unknown makeup error');
     } finally {
       setMakeupLoading(false);
+    }
+  };
+
+  const runHairColor = async () => {
+    const base = preprocessedB64 ?? selectedImageB64;
+    if (!base) return;
+    setHairColorLoading(true);
+    setHairColorError(null);
+    try {
+      const data = await applyHairColorFromBase64(base, hairColorHex, hairColorIntensity);
+      if (data.success && data.result_image_b64) {
+        setHairColorResultB64(data.result_image_b64);
+      } else {
+        setHairColorError(data.error ?? data.details ?? 'Saç rengi uygulanamadı.');
+      }
+    } catch (err: any) {
+      setHairColorError(err?.message ?? 'Bilinmeyen hata.');
+    } finally {
+      setHairColorLoading(false);
     }
   };
 
@@ -2452,8 +2480,161 @@ export default function CreateScreen() {
               </View>
             ) : null}
 
+            {/* Section 6: Hair Color */}
+            <View style={[styles.sectionHeader, { marginTop: 4 }]}>
+              <View style={[styles.stepBadge, { backgroundColor: '#7C3AED' }]}>
+                <Text style={styles.stepBadgeText}>6</Text>
+              </View>
+              <ThemedText type="defaultSemiBold">Saç Rengi</ThemedText>
+            </View>
+            <ThemedText style={styles.helperText}>
+              Doğal veya canlı bir renk seç, yoğunluğu ayarla ve uygula. Tüm doku ve parıltı korunur.
+            </ThemedText>
+
+            {/* Natural color presets */}
+            <ThemedText style={[styles.sideLabel, { marginBottom: 4 }]}>Doğal</ThemedText>
+            <View style={styles.hairSwatchRow}>
+              {([
+                { hex: '#1a1a1a', label: 'Siyah' },
+                { hex: '#3b1f0f', label: 'K. Kahve' },
+                { hex: '#6b3a2a', label: 'Kahve' },
+                { hex: '#8B5E3C', label: 'A. Kahve' },
+                { hex: '#C19A6B', label: 'Kumral' },
+                { hex: '#F0C040', label: 'Sarı' },
+                { hex: '#F5EDD6', label: 'Platin' },
+              ] as { hex: string; label: string }[]).map((item) => (
+                <Pressable
+                  key={item.hex}
+                  onPress={() => setHairColorHex(item.hex)}
+                  style={[
+                    styles.hairSwatch,
+                    { backgroundColor: item.hex },
+                    hairColorHex.toUpperCase() === item.hex.toUpperCase() && styles.hairSwatchActive,
+                  ]}
+                />
+              ))}
+            </View>
+
+            {/* Vivid color presets */}
+            <ThemedText style={[styles.sideLabel, { marginBottom: 4, marginTop: 8 }]}>Canlı</ThemedText>
+            <View style={styles.hairSwatchRow}>
+              {([
+                { hex: '#8B2500', label: 'Kızıl' },
+                { hex: '#CC2200', label: 'Kırmızı' },
+                { hex: '#B97333', label: 'Bakır' },
+                { hex: '#B76E79', label: 'Rose Gold' },
+                { hex: '#FF69B4', label: 'Pembe' },
+                { hex: '#7B2D8B', label: 'Mor' },
+                { hex: '#1565C0', label: 'Mavi' },
+                { hex: '#00827F', label: 'Teal' },
+              ] as { hex: string; label: string }[]).map((item) => (
+                <Pressable
+                  key={item.hex}
+                  onPress={() => setHairColorHex(item.hex)}
+                  style={[
+                    styles.hairSwatch,
+                    { backgroundColor: item.hex },
+                    hairColorHex.toUpperCase() === item.hex.toUpperCase() && styles.hairSwatchActive,
+                  ]}
+                />
+              ))}
+            </View>
+
+            {/* Custom hex input + preview dot */}
+            <View style={styles.hairHexRow}>
+              <View style={[styles.hairHexPreview, { backgroundColor: hairColorHex }]} />
+              <TextInput
+                style={[
+                  styles.makeupHexInput,
+                  {
+                    color: colors.text,
+                    borderColor: panelBorder,
+                    flex: 1,
+                  },
+                ]}
+                value={hairColorHex}
+                onChangeText={(v) => setHairColorHex(v.startsWith('#') ? v : `#${v}`)}
+                placeholder="#RRGGBB"
+                placeholderTextColor={mutedText}
+                maxLength={7}
+                autoCapitalize="characters"
+              />
+            </View>
+
+            {/* Intensity slider */}
+            <View style={styles.sliderRow}>
+              <ThemedText style={styles.sideLabel}>Yoğunluk</ThemedText>
+              <ThemedText style={[styles.sideLabel, { color: accent }]}>
+                {Math.round(hairColorIntensity * 100)}%
+              </ThemedText>
+            </View>
+            <Slider
+              value={hairColorIntensity}
+              onValueChange={setHairColorIntensity}
+              minimumValue={0.1}
+              maximumValue={1}
+              step={0.05}
+              minimumTrackTintColor={accent}
+              maximumTrackTintColor={colorScheme === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'}
+              thumbTintColor={accent}
+            />
+
+            {/* Apply button */}
+            <Pressable
+              style={[
+                styles.cvButton,
+                {
+                  backgroundColor: accent,
+                  opacity: (preprocessedB64 ?? selectedImageB64) && !hairColorLoading ? 1 : 0.45,
+                },
+              ]}
+              onPress={runHairColor}
+              disabled={!(preprocessedB64 ?? selectedImageB64) || hairColorLoading}>
+              {hairColorLoading
+                ? <ActivityIndicator color="#fff" />
+                : <ThemedText style={[styles.cvButtonText, { color: '#fff' }]}>Rengi Uygula</ThemedText>}
+            </Pressable>
+
+            {hairColorError ? (
+              <Text style={styles.errorText}>{hairColorError}</Text>
+            ) : null}
+
+            {/* Result side-by-side */}
+            {hairColorResultB64 ? (
+              <View style={styles.sideBySide}>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Orijinal</ThemedText>
+                  <Image
+                    source={{ uri: `data:image/png;base64,${preprocessedB64 ?? selectedImageB64}` }}
+                    style={styles.sideImage}
+                    contentFit="contain"
+                  />
+                </View>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Saç Rengi</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${hairColorResultB64}`)}>
+                    <Image
+                      source={{ uri: `data:image/png;base64,${hairColorResultB64}` }}
+                      style={styles.sideImage}
+                      contentFit="contain"
+                    />
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
+            {/* Divider */}
+            <View style={[styles.sectionDivider, { marginVertical: 16 }]} />
+
+            {/* Section 7: Manual Makeup */}
+            <View style={[styles.sectionHeader, { marginTop: 0 }]}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}>
+                <Text style={styles.stepBadgeText}>7</Text>
+              </View>
+              <ThemedText type="defaultSemiBold">Manual Makeup</ThemedText>
+            </View>
             {/* Section 6: Manual Makeup */}
-            <ThemedText type="defaultSemiBold">6. Manual Makeup</ThemedText>
+            <ThemedText type="defaultSemiBold" style={{ display: 'none' }}>6. Manual Makeup</ThemedText>
             <ThemedText style={styles.helperText}>
               Bölge seç, HEX renk gir ve yoğunluğu ayarla. Uygula ile seçili bölgeyi landmark tabanlı renklendirir.
             </ThemedText>
@@ -3351,6 +3532,37 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(255,255,255,0.07)',
     marginTop: 6,
+  },
+  hairSwatchRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+  hairSwatch: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  hairSwatchActive: {
+    borderColor: '#fff',
+    transform: [{ scale: 1.15 }],
+  },
+  hairHexRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  hairHexPreview: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
   stepBadge: {
     minWidth: 30,
