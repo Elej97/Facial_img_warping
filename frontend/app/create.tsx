@@ -82,12 +82,17 @@ type ContainLayout = {
   offsetY: number;
 };
 
+type PreprocessMeta = {
+  faceBBox: [number, number, number, number];
+  processedSize: { width: number; height: number };
+};
+
 type ResizeMode = 'left' | 'right' | 'top' | 'bottom' | 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
 
 type ProOperation = ProWarpOperation | 'aging' | 'deaging';
-type ProPreset = 'natural' | 'balanced' | 'strong';
 type MakeupUiTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
 type MakeupBackendRegion = 'lip' | 'cheek' | 'brow' | 'lash' | 'eye' | 'teeth';
+type MakeupPreviewKind = 'hair' | 'makeup' | 'accessory';
 type AccessoryUiTarget = AccessoryType;
 
 type MakeupPreset = {
@@ -139,25 +144,17 @@ const PRO_OPERATIONS: ProOperation[] = [
 ];
 
 const PRO_LABEL: Record<ProOperation, string> = {
-  smile_enhancement: 'Pro Smile',
-  brow_lift: 'Pro Brow Lift',
-  lip_plump: 'Pro Lip Plump',
-  slim_face: 'Pro Slim Face',
-  aging: 'Pro Aging',
-  deaging: 'Pro De-Aging',
+  smile_enhancement: 'Smile',
+  brow_lift: 'Brow Lift',
+  lip_plump: 'Lip Plump',
+  slim_face: 'Slim Face',
+  aging: 'Aging',
+  deaging: 'De-Aging',
 };
 
-const PRO_PRESET_VALUES: Record<ProPreset, { intensity: number; rbfSmooth: number }> = {
-  natural: { intensity: 0.3, rbfSmooth: 4.0 },
-  balanced: { intensity: 0.6, rbfSmooth: 3.0 },
-  strong: { intensity: 0.85, rbfSmooth: 2.0 },
-};
-
-const PRO_PRESET_LABEL: Record<ProPreset, string> = {
-  natural: 'Natural',
-  balanced: 'Balanced',
-  strong: 'Strong',
-};
+const LAB_DEFAULT_INTENSITY = 50;
+const LAB_INTENSITY_STEP = 5;
+const LAB_RBF_SMOOTH = 2.8;
 
 const MANUAL_MAKEUP_PRESETS: MakeupPreset[] = [
   { key: 'lip', label: 'Ruj', backendRegion: 'lip', defaultColor: '#D45A73' },
@@ -326,13 +323,16 @@ export default function CreateScreen() {
   const [preprocessLoading, setPreprocessLoading] = useState(false);
   const [preprocessError, setPreprocessError] = useState<string | null>(null);
   const [preprocessedB64, setPreprocessedB64] = useState<string | null>(null);
+  const [preprocessMeta, setPreprocessMeta] = useState<PreprocessMeta | null>(null);
 
   const [landmarkLoading, setLandmarkLoading] = useState(false);
   const [landmarkError, setLandmarkError] = useState<string | null>(null);
-  const [landmarkB64, setLandmarkB64] = useState<string | null>(null);
   const [landmarkCount, setLandmarkCount] = useState<number | null>(null);
   const [landmarkPoints, setLandmarkPoints] = useState<number[][] | null>(null);
   const [showLandmarks, setShowLandmarks] = useState(false);
+  const preprocessRunRef = useRef(0);
+  const landmarkRunRef = useRef(0);
+  const [landmarkPreviewLayout, setLandmarkPreviewLayout] = useState<StageLayout | null>(null);
 
   const [referenceExpressionName, setReferenceExpressionName] = useState<string | null>(null);
   const [referenceExpressionUri, setReferenceExpressionUri] = useState<string | null>(null);
@@ -345,10 +345,16 @@ export default function CreateScreen() {
   const [manualLipWarpError, setManualLipWarpError] = useState<string | null>(null);
 
   const [landmarkBackend, setLandmarkBackend] = useState<'mediapipe' | 'dlib' | 'hybrid'>('hybrid');
-  const [activeProOperations, setActiveProOperations] = useState<ProOperation[]>(['smile_enhancement']);
-  const [proPreset, setProPreset] = useState<ProPreset>('balanced');
-  const [proIntensity, setProIntensity] = useState(0.65);
-  const [proRbfSmooth, setProRbfSmooth] = useState(2.8);
+  const [activeProOperations, setActiveProOperations] = useState<ProOperation[]>([]);
+  const [proOperationIntensity, setProOperationIntensity] = useState<Record<ProOperation, number>>({
+    smile_enhancement: LAB_DEFAULT_INTENSITY,
+    brow_lift: LAB_DEFAULT_INTENSITY,
+    lip_plump: LAB_DEFAULT_INTENSITY,
+    slim_face: LAB_DEFAULT_INTENSITY,
+    aging: LAB_DEFAULT_INTENSITY,
+    deaging: LAB_DEFAULT_INTENSITY,
+  });
+  const [hoveredProOperation, setHoveredProOperation] = useState<ProOperation | null>(null);
   const [proLoading, setProLoading] = useState(false);
   const [proError, setProError] = useState<string | null>(null);
   const [proResultB64, setProResultB64] = useState<string | null>(null);
@@ -359,7 +365,6 @@ export default function CreateScreen() {
     id: string;
     operation: ProOperation;
     intensity: number;
-    preset: ProPreset;
     resultB64: string;
     locked: boolean;
   };
@@ -400,6 +405,7 @@ export default function CreateScreen() {
   const [hairColorLoading, setHairColorLoading] = useState(false);
   const [hairColorError, setHairColorError] = useState<string | null>(null);
   const [hairColorResultB64, setHairColorResultB64] = useState<string | null>(null);
+  const [makeupPreviewKind, setMakeupPreviewKind] = useState<MakeupPreviewKind | null>(null);
 
   const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
   const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
@@ -487,6 +493,22 @@ export default function CreateScreen() {
 
     return rows;
   }, [evalMetrics]);
+
+  const landmarkOverlayPoints = useMemo(() => {
+    if (!landmarkPoints || !preprocessMeta || !selectedImageSize || !landmarkPreviewLayout) {
+      return [];
+    }
+
+    const contain = getContainLayout(landmarkPreviewLayout, selectedImageSize);
+    const [bboxX, bboxY, bboxW, bboxH] = preprocessMeta.faceBBox;
+    const scaleX = bboxW / preprocessMeta.processedSize.width;
+    const scaleY = bboxH / preprocessMeta.processedSize.height;
+
+    return landmarkPoints.map(([x, y]) => ({
+      x: contain.offsetX + (bboxX + x * scaleX) * contain.scale,
+      y: contain.offsetY + (bboxY + y * scaleY) * contain.scale,
+    }));
+  }, [landmarkPoints, landmarkPreviewLayout, preprocessMeta, selectedImageSize]);
 
   const downloadBase64File = async (fileB64: string, fileName: string, mimeType: string) => {
     if (Platform.OS === 'web') {
@@ -894,6 +916,10 @@ export default function CreateScreen() {
     resetExpressionTransferState();
     resetAgeAnalysis();
     setMakeupResultB64(null);
+    setHairColorResultB64(null);
+    setAccessoryResultB64(null);
+    setAccessoryEnabled(false);
+    setMakeupPreviewKind(null);
     setMakeupError(null);
     closeCropEditor();
     void runAgeAnalysis(uri, 'before', 'uri');
@@ -1107,15 +1133,19 @@ export default function CreateScreen() {
             },
           },
         ],
-        { compress: 1, format: ImageManipulator.SaveFormat.PNG }
+        { compress: 1, format: ImageManipulator.SaveFormat.PNG, base64: true }
       );
 
       setSelectedImageUri(result.uri);
       setSelectedImageSize({ width: result.width ?? Math.round(cropWidth), height: result.height ?? Math.round(cropHeight) });
-      setSelectedImageB64(null);
+      setSelectedImageB64(result.base64 ? `data:image/png;base64,${result.base64}` : null);
       setCropApplied(true);
       setProcessState('selected');
       setMakeupResultB64(null);
+      setHairColorResultB64(null);
+      setAccessoryResultB64(null);
+      setAccessoryEnabled(false);
+      setMakeupPreviewKind(null);
       setMakeupError(null);
       setStatusMessage('Kırpma uygulandı. Görsel artık seçtiğin kadrajla hazır.');
       resetAgeAnalysis();
@@ -1128,15 +1158,18 @@ export default function CreateScreen() {
     }
   };
 
-  const handlePreprocess = async () => {
-    if (!selectedImageUri) return;
+  const handlePreprocess = async (imageUri = selectedImageUri) => {
+    if (!imageUri) return;
+    const runId = ++preprocessRunRef.current;
     setPreprocessLoading(true);
     setPreprocessError(null);
     setPreprocessedB64(null);
-    setLandmarkB64(null);
+    setPreprocessMeta(null);
     setLandmarkCount(null);
     setLandmarkPoints(null);
     setMakeupResultB64(null);
+    setHairColorResultB64(null);
+    setMakeupPreviewKind(null);
     setMakeupError(null);
     resetExpressionTransferState();
     setProResultB64(null);
@@ -1145,6 +1178,8 @@ export default function CreateScreen() {
     setMakeupLoading(false);
     setMakeupError(null);
     setMakeupResultB64(null);
+    setHairColorResultB64(null);
+    setMakeupPreviewKind(null);
     setMakeupLayers([]);
     setAccessoryLoading(false);
     setAccessoryError(null);
@@ -1160,32 +1195,77 @@ export default function CreateScreen() {
     setProCompareHeld(false);
     proCompareOpacity.setValue(0);
     try {
-      const data = await preprocessFromUri(selectedImageUri);
+      const data = await preprocessFromUri(imageUri);
+      if (runId !== preprocessRunRef.current) return;
       if (!data.success) throw new Error(data.message ?? 'Preprocess failed');
       setPreprocessedB64(data.processed_image_b64);
+      const bbox = Array.isArray(data.face_bbox) ? data.face_bbox : null;
+      const processedSize = Array.isArray(data.processed_size) ? data.processed_size : null;
+      if (bbox?.length === 4) {
+        const bboxW = Number(bbox[2]);
+        const bboxH = Number(bbox[3]);
+        const fallbackScale = Math.min(256 / bboxW, 256 / bboxH);
+        setPreprocessMeta({
+          faceBBox: [Number(bbox[0]), Number(bbox[1]), Number(bbox[2]), Number(bbox[3])],
+          processedSize: processedSize?.length === 2
+            ? { width: Number(processedSize[0]), height: Number(processedSize[1]) }
+            : { width: Math.max(1, Math.floor(bboxW * fallbackScale)), height: Math.max(1, Math.floor(bboxH * fallbackScale)) },
+        });
+      }
     } catch (e: any) {
+      if (runId !== preprocessRunRef.current) return;
       setPreprocessError(e?.message ?? 'Unknown error');
     } finally {
-      setPreprocessLoading(false);
+      if (runId === preprocessRunRef.current) {
+        setPreprocessLoading(false);
+      }
     }
   };
 
-  const handleLandmarks = async () => {
-    if (!preprocessedB64) return;
+  const handleLandmarks = async (imageB64 = preprocessedB64, backend = landmarkBackend) => {
+    if (!imageB64) return;
+    const runId = ++landmarkRunRef.current;
     setLandmarkLoading(true);
     setLandmarkError(null);
     try {
-      const data = await landmarksFromBase64(preprocessedB64);
+      const data = await landmarksFromBase64(imageB64, { landmarkBackend: backend });
+      if (runId !== landmarkRunRef.current) return;
       if (!data.success) throw new Error(data.message ?? 'Landmark detection failed');
-      setLandmarkB64(data.landmark_image_b64);
       setLandmarkCount(data.landmark_count);
       setLandmarkPoints(Array.isArray(data.landmarks) ? data.landmarks : null);
     } catch (e: any) {
+      if (runId !== landmarkRunRef.current) return;
       setLandmarkError(e?.message ?? 'Unknown error');
     } finally {
-      setLandmarkLoading(false);
+      if (runId === landmarkRunRef.current) {
+        setLandmarkLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    if (!selectedImageUri) {
+      preprocessRunRef.current += 1;
+      landmarkRunRef.current += 1;
+      return;
+    }
+    void handlePreprocess(selectedImageUri);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedImageUri]);
+
+  useEffect(() => {
+    if (!preprocessedB64) return;
+    setLandmarkCount(null);
+    setLandmarkPoints(null);
+    void handleLandmarks(preprocessedB64, landmarkBackend);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preprocessedB64, landmarkBackend]);
+
+  useEffect(() => {
+    if (activeTab !== 'analysis' && showLandmarks) {
+      setShowLandmarks(false);
+    }
+  }, [activeTab, showLandmarks]);
 
   const exportLandmarks = async (format: 'json' | 'csv') => {
     if (!landmarkPoints || landmarkPoints.length === 0) {
@@ -1252,9 +1332,14 @@ export default function CreateScreen() {
     }
   };
 
-  const runProOperation = useCallback(async (override?: { intensity?: number; rbfSmooth?: number; operation?: ProOperation }) => {
+  const getProIntensityValue = useCallback((operation: ProOperation) => {
+    return (proOperationIntensity[operation] ?? LAB_DEFAULT_INTENSITY) / 100;
+  }, [proOperationIntensity]);
+
+  const runProOperation = useCallback(async (override?: { operation?: ProOperation }) => {
     if (!preprocessedB64) return;
-    const operations = override?.operation ? [override.operation] : activeProOperations;
+    const operations = (override?.operation ? [override.operation] : activeProOperations)
+      .filter((operation) => (proOperationIntensity[operation] ?? LAB_DEFAULT_INTENSITY) > 0);
     if (operations.length === 0) {
       setProResultB64(null);
       setEvalResultB64(null);
@@ -1270,15 +1355,13 @@ export default function CreateScreen() {
     let lastSpectrumBlue: string | null = null;
     let lastSpectrumRed: string | null = null;
 
-    const effectiveIntensity = override?.intensity ?? proIntensity;
-    const effectiveRbfSmooth = override?.rbfSmooth ?? proRbfSmooth;
-
     setProCompareHeld(false);
 
     setProLoading(true);
     setProError(null);
     try {
       for (const effectiveOperation of operations) {
+        const effectiveIntensity = getProIntensityValue(effectiveOperation);
         if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
           const data = await frequencyProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, {
             landmarkBackend,
@@ -1289,12 +1372,12 @@ export default function CreateScreen() {
           if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
           effectSourceB64 = data.result_image_b64;
           lastMetrics = data.metrics ?? null;
-          lastSourceLabel = data.mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging';
+          lastSourceLabel = data.mode === 'aging' ? 'Frequency / Aging' : 'Frequency / De-Aging';
           lastSpectrumGray = data.spectrum_gray_b64 ?? null;
           lastSpectrumBlue = data.spectrum_blue_b64 ?? null;
           lastSpectrumRed = data.spectrum_red_b64 ?? null;
         } else {
-          const data = await warpProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
+          const data = await warpProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, LAB_RBF_SMOOTH, {
             landmarkBackend,
             temporalSmoothing: true,
             emaAlpha: 0.62,
@@ -1303,7 +1386,7 @@ export default function CreateScreen() {
           if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
           effectSourceB64 = data.result_image_b64;
           lastMetrics = data.metrics ?? null;
-          lastSourceLabel = `Pro Warp / ${operations.map((operation) => PRO_LABEL[operation]).join(' + ')}`;
+          lastSourceLabel = `Warp / ${operations.map((operation) => PRO_LABEL[operation]).join(' + ')}`;
           lastSpectrumGray = null;
           lastSpectrumBlue = null;
           lastSpectrumRed = null;
@@ -1325,7 +1408,7 @@ export default function CreateScreen() {
     } finally {
       setProLoading(false);
     }
-  }, [activeProOperations, landmarkBackend, preprocessedB64, proIntensity, proRbfSmooth, runAgeAnalysis, selectedImageB64]);
+  }, [activeProOperations, getProIntensityValue, landmarkBackend, preprocessedB64, proOperationIntensity, runAgeAnalysis, selectedImageB64]);
 
   const applyMakeup = async () => {
     if (!preprocessedB64) return;
@@ -1363,6 +1446,7 @@ export default function CreateScreen() {
       
       setMakeupLayers([...makeupLayers, newLayer]);
       setMakeupResultB64(data.result_image_b64);
+      setMakeupPreviewKind('makeup');
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (error: any) {
@@ -1373,7 +1457,7 @@ export default function CreateScreen() {
   };
 
   const runHairColor = async () => {
-    const base = preprocessedB64 ?? selectedImageB64;
+    const base = selectedImageB64 ?? preprocessedB64;
     if (!base) return;
     setHairColorLoading(true);
     setHairColorError(null);
@@ -1381,6 +1465,7 @@ export default function CreateScreen() {
       const data = await applyHairColorFromBase64(base, hairColorHex, hairColorIntensity);
       if (data.success && data.result_image_b64) {
         setHairColorResultB64(data.result_image_b64);
+        setMakeupPreviewKind('hair');
       } else {
         setHairColorError(data.error ?? data.details ?? 'Saç rengi uygulanamadı.');
       }
@@ -1394,6 +1479,7 @@ export default function CreateScreen() {
   const runAccessoryPreview = useCallback(async () => {
     if (!preprocessedB64 || !accessoryEnabled) {
       setAccessoryResultB64(null);
+      setMakeupPreviewKind((current) => current === 'accessory' ? null : current);
       return;
     }
     const effectSourceB64 = selectedImageB64 ?? preprocessedB64;
@@ -1427,6 +1513,7 @@ export default function CreateScreen() {
       }
 
       setAccessoryResultB64(data.result_image_b64);
+      setMakeupPreviewKind('accessory');
     } catch (error: any) {
       setAccessoryError(error?.message ?? 'Unknown accessory error');
     } finally {
@@ -1445,20 +1532,32 @@ export default function CreateScreen() {
     selectedImageB64,
   ]);
 
-  const applyProPreset = (preset: ProPreset) => {
-    const values = PRO_PRESET_VALUES[preset];
-    setProPreset(preset);
-    setProIntensity(values.intensity);
-    setProRbfSmooth(values.rbfSmooth);
-    // State changes above trigger the useEffect debounce — no direct call needed.
+  const toggleProOperation = (operation: ProOperation) => {
+    setActiveProOperations((current) => {
+      if (current.includes(operation)) {
+        return current.filter((item) => item !== operation);
+      }
+
+      setProOperationIntensity((values) => ({
+        ...values,
+        [operation]: LAB_DEFAULT_INTENSITY,
+      }));
+      return [...current, operation];
+    });
   };
 
-  const toggleProOperation = (operation: ProOperation) => {
-    setActiveProOperations((current) =>
-      current.includes(operation)
-        ? current.filter((item) => item !== operation)
-        : [...current, operation]
-    );
+  const adjustProOperationIntensity = (operation: ProOperation, delta: number) => {
+    setProOperationIntensity((values) => {
+      const nextValue = clamp((values[operation] ?? LAB_DEFAULT_INTENSITY) + delta, 0, 100);
+      if (nextValue === 0) {
+        setActiveProOperations((current) => current.filter((item) => item !== operation));
+      }
+
+      return {
+        ...values,
+        [operation]: nextValue,
+      };
+    });
   };
 
   useEffect(() => {
@@ -1498,23 +1597,23 @@ export default function CreateScreen() {
         clearTimeout(proDebounceRef.current);
       }
     };
-  }, [activeProOperations, preprocessedB64, proIntensity, proRbfSmooth, runProOperation]);
+  }, [activeProOperations, preprocessedB64, proOperationIntensity, runProOperation]);
 
   const applyProLayer = async () => {
     // Run pro operation once and add to layers
     if (!preprocessedB64) return;
-    if (activeProOperations.length === 0) return;
+    const activeOperationsWithIntensity = activeProOperations
+      .filter((operation) => (proOperationIntensity[operation] ?? LAB_DEFAULT_INTENSITY) > 0);
+    if (activeOperationsWithIntensity.length === 0) return;
     const effectSourceB64 = selectedImageB64 ?? preprocessedB64;
-
-    const effectiveIntensity = proIntensity;
-    const effectiveRbfSmooth = proRbfSmooth;
 
     setProLoading(true);
     setProError(null);
     try {
       let resultB64: string | null = null;
       let workingB64 = effectSourceB64;
-      for (const effectiveOperation of activeProOperations) {
+      for (const effectiveOperation of activeOperationsWithIntensity) {
+        const effectiveIntensity = getProIntensityValue(effectiveOperation);
         if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
           const data = await frequencyProFromBase64(workingB64, effectiveOperation, effectiveIntensity, {
             landmarkBackend,
@@ -1525,7 +1624,7 @@ export default function CreateScreen() {
           if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
           workingB64 = data.result_image_b64;
         } else {
-          const data = await warpProFromBase64(workingB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
+          const data = await warpProFromBase64(workingB64, effectiveOperation, effectiveIntensity, LAB_RBF_SMOOTH, {
             landmarkBackend,
             temporalSmoothing: true,
             emaAlpha: 0.62,
@@ -1540,9 +1639,8 @@ export default function CreateScreen() {
       if (resultB64) {
         const newLayer: ProLayer = {
           id: `${Date.now()}-${Math.random()}`,
-          operation: activeProOperations[0],
-          intensity: effectiveIntensity,
-          preset: proPreset,
+          operation: activeOperationsWithIntensity[0],
+          intensity: getProIntensityValue(activeOperationsWithIntensity[0]),
           resultB64,
           locked: true,
         };
@@ -1558,7 +1656,7 @@ export default function CreateScreen() {
   };
 
   const exportCsv = async () => {
-    if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
+    if (!fullQualitySourceB64 || !evalResultB64 || !evalMetrics) {
       Alert.alert('Rapor Hazır Değil', 'Önce bir warp veya frequency işlemi çalıştırmalısın.');
       return;
     }
@@ -1567,7 +1665,7 @@ export default function CreateScreen() {
       const data = await exportEvaluationReportFromBase64(
         'csv',
         evalSourceLabel ?? 'Unknown Operation',
-        selectedImageB64 ?? preprocessedB64,
+        fullQualitySourceB64,
         evalResultB64,
         { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
       );
@@ -1581,7 +1679,7 @@ export default function CreateScreen() {
   };
 
   const exportPdf = async () => {
-    if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
+    if (!fullQualitySourceB64 || !evalResultB64 || !evalMetrics) {
       Alert.alert('Rapor Hazır Değil', 'Önce bir warp veya frequency işlemi çalıştırmalısın.');
       return;
     }
@@ -1590,7 +1688,7 @@ export default function CreateScreen() {
       const data = await exportEvaluationReportFromBase64(
         'pdf',
         evalSourceLabel ?? 'Unknown Operation',
-        selectedImageB64 ?? preprocessedB64,
+        fullQualitySourceB64,
         evalResultB64,
         { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
       );
@@ -1614,9 +1712,9 @@ export default function CreateScreen() {
     setPreprocessLoading(false);
     setPreprocessError(null);
     setPreprocessedB64(null);
+    setPreprocessMeta(null);
     setLandmarkLoading(false);
     setLandmarkError(null);
-    setLandmarkB64(null);
     setLandmarkCount(null);
     setLandmarkPoints(null);
     setShowLandmarks(false);
@@ -1625,7 +1723,16 @@ export default function CreateScreen() {
     setProError(null);
     setProResultB64(null);
     setProMetrics(null);
-    setActiveProOperations(['smile_enhancement']);
+    setActiveProOperations([]);
+    setHoveredProOperation(null);
+    setProOperationIntensity({
+      smile_enhancement: LAB_DEFAULT_INTENSITY,
+      brow_lift: LAB_DEFAULT_INTENSITY,
+      lip_plump: LAB_DEFAULT_INTENSITY,
+      slim_face: LAB_DEFAULT_INTENSITY,
+      aging: LAB_DEFAULT_INTENSITY,
+      deaging: LAB_DEFAULT_INTENSITY,
+    });
     setEvalMetrics(null);
     setEvalSourceLabel(null);
     setEvalResultB64(null);
@@ -1719,11 +1826,15 @@ export default function CreateScreen() {
   const accent = '#8B5CF6';
   const mutedText = colorScheme === 'dark' ? '#9CA3AF' : '#64748B';
   const activeAccessoryPreset = ACCESSORY_PRESETS.find((item) => item.key === accessoryTarget) ?? ACCESSORY_PRESETS[0];
+  const fullQualitySourceB64 = selectedImageB64 ?? preprocessedB64;
   const getCurrentResultB64 = () => {
     if (activeTab === 'prolab' && proResultB64) return proResultB64;
-    if (activeTab === 'makeup' && hairColorResultB64) return hairColorResultB64;
-    if (activeTab === 'makeup' && makeupResultB64) return makeupResultB64;
-    if (activeTab === 'makeup' && accessoryResultB64) return accessoryResultB64;
+    if (activeTab === 'makeup') {
+      if (makeupPreviewKind === 'accessory' && accessoryResultB64) return accessoryResultB64;
+      if (makeupPreviewKind === 'makeup' && makeupResultB64) return makeupResultB64;
+      if (makeupPreviewKind === 'hair' && hairColorResultB64) return hairColorResultB64;
+      return accessoryResultB64 ?? makeupResultB64 ?? hairColorResultB64;
+    }
     if (activeTab === 'expression' && expressionTransferResultB64) return expressionTransferResultB64;
     return null;
   };
@@ -1852,7 +1963,34 @@ export default function CreateScreen() {
               },
               Platform.OS === 'web' ? ({ order: 3 } as any) : null,
             ]}>
-            {selectedImageUri && currentResultB64 ? (
+            {selectedImageUri && showLandmarks && landmarkPoints && preprocessMeta ? (
+              <Pressable
+                style={{ flex: 1, position: 'relative', overflow: 'hidden', borderRadius: 16 }}
+                onLayout={(event) => {
+                  const { width: stageWidth, height: stageHeight } = event.nativeEvent.layout;
+                  setLandmarkPreviewLayout({ width: stageWidth, height: stageHeight });
+                }}
+                onPress={() => setLightboxUri(selectedImageUri)}>
+                <Image source={{ uri: selectedImageUri }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  {landmarkOverlayPoints.map((point, index) => (
+                    <View
+                      key={`${index}-${Math.round(point.x)}-${Math.round(point.y)}`}
+                      style={[
+                        styles.landmarkOverlayDot,
+                        {
+                          left: point.x,
+                          top: point.y,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <View style={[styles.previewBadge, { backgroundColor: 'rgba(8,145,178,0.86)' }]}>
+                  <ThemedText style={styles.previewBadgeText}>Noktalar</ThemedText>
+                </View>
+              </Pressable>
+            ) : selectedImageUri && currentResultB64 ? (
               <View style={{ flex: 1, position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
                 <Image source={{ uri: `data:image/png;base64,${currentResultB64}` }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
                 <View style={[styles.previewBadge, { backgroundColor: 'rgba(160,32,240,0.8)' }]}>
@@ -1885,7 +2023,7 @@ export default function CreateScreen() {
             {/* Vertical Toolbar */}
             <View style={{ width: 64, borderRightWidth: 1, borderRightColor: panelBorder, backgroundColor: colorScheme === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)', paddingTop: 20, alignItems: 'center', gap: 20 }}>
               {(['analysis', 'expression', 'prolab', 'makeup'] as TabKey[]).map((tab) => {
-                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'ProLab', makeup: 'Makyaj' };
+                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'Lab', makeup: 'Makyaj' };
                   const icons: Record<TabKey, any> = { analysis: 'scan-outline', expression: 'happy-outline', prolab: 'flask-outline', makeup: 'color-palette-outline' };
                   const isActive = activeTab === tab;
                   return (
@@ -1949,75 +2087,50 @@ export default function CreateScreen() {
                   </Pressable>
                 ))}
               </View>
-            </View>
-
-            {/* Section 1: Preprocessing */}
-            <View style={styles.sectionHeader}>
-              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>1</Text></View>
-              <ThemedText type="defaultSemiBold">Yüz Tespiti</ThemedText>
-            </View>
-            <Pressable
-              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: selectedImageUri ? 1 : 0.5 }]}
-              onPress={handlePreprocess}
-              disabled={!selectedImageUri || preprocessLoading}>
-              {preprocessLoading
-                ? <ActivityIndicator color={tintTextColor} />
-                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Yüzü Tespit Et</ThemedText>}
-            </Pressable>
-            {preprocessError ? <Text style={styles.errorText}>{preprocessError}</Text> : null}
-            {preprocessedB64 ? (
-              <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
-                <Image
-                  source={{ uri: `data:image/png;base64,${preprocessedB64}` }}
-                  style={styles.resultImage}
-                  contentFit="contain"
-                />
-              </Pressable>
-            ) : null}
-
-            {/* Section 2: Landmarks */}
-            <View style={styles.sectionDivider} />
-            <View style={styles.sectionHeader}>
-              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>2</Text></View>
-              <ThemedText type="defaultSemiBold">Yüz Noktaları</ThemedText>
-            </View>
-            <Pressable
-              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.4 }]}
-              onPress={handleLandmarks}
-              disabled={!preprocessedB64 || landmarkLoading}>
-              {landmarkLoading
-                ? <ActivityIndicator color={tintTextColor} />
-                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Noktaları Tespit Et</ThemedText>}
-            </Pressable>
-            {landmarkError ? <Text style={styles.errorText}>{landmarkError}</Text> : null}
-            {landmarkCount != null ? (
-              <View style={styles.landmarkRow}>
+              <View style={[styles.landmarkRow, { marginTop: 10 }]}>
                 <View style={{ flex: 1 }}>
-                  <ThemedText style={styles.helperText}>{landmarkCount} nokta bulundu</ThemedText>
+                  <ThemedText style={styles.helperText}>
+                    {preprocessLoading
+                      ? 'Yüz otomatik tespit ediliyor...'
+                      : landmarkLoading
+                        ? `${landmarkBackend === 'mediapipe' ? 'MediaPipe' : landmarkBackend === 'dlib' ? 'Dlib' : 'Hybrid'} noktaları hazırlanıyor...`
+                        : landmarkCount != null
+                          ? `${landmarkCount} nokta bulundu`
+                          : selectedImageUri
+                            ? 'Fotoğraf yüklenince otomatik tespit başlar'
+                            : 'Önce fotoğraf seç'}
+                  </ThemedText>
                   <ThemedText style={[styles.helperText, { fontSize: 11, opacity: 0.5 }]}>
-                    Gözler, kaşlar, ağız, burun, çene ve alın noktaları
+                    {landmarkBackend === 'mediapipe' ? 'MediaPipe' : landmarkBackend === 'dlib' ? 'Dlib' : 'Hybrid'} modeli aktif
                   </ThemedText>
                 </View>
-                <Switch value={showLandmarks} onValueChange={setShowLandmarks} />
+                <Pressable
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: showLandmarks, disabled: !landmarkPoints || landmarkLoading }}
+                  onPress={() => setShowLandmarks((value) => !value)}
+                  disabled={!landmarkPoints || landmarkLoading}
+                  style={[styles.landmarkToggleWrap, { opacity: landmarkPoints && !landmarkLoading ? 1 : 0.45 }]}>
+                  <ThemedText style={[styles.landmarkToggleLabel, { color: colors.text }]}>Noktaları göster</ThemedText>
+                  <View style={[
+                    styles.landmarkToggleTrack,
+                    {
+                      backgroundColor: showLandmarks ? Colors[colorScheme].tint : softSurface,
+                      borderColor: showLandmarks ? Colors[colorScheme].tint : panelBorder,
+                    },
+                  ]}>
+                    <View style={[
+                      styles.landmarkToggleThumb,
+                      {
+                        transform: [{ translateX: showLandmarks ? 18 : 0 }],
+                        backgroundColor: showLandmarks ? tintTextColor : colors.text,
+                      },
+                    ]} />
+                  </View>
+                </Pressable>
               </View>
-            ) : null}
-            {landmarkB64 && showLandmarks ? (
-              <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${landmarkB64}`)}>
-                <Image
-                  source={{ uri: `data:image/png;base64,${landmarkB64}` }}
-                  style={styles.resultImage}
-                  contentFit="contain"
-                />
-              </Pressable>
-            ) : preprocessedB64 && landmarkCount != null && !showLandmarks ? (
-              <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
-                <Image
-                  source={{ uri: `data:image/png;base64,${preprocessedB64}` }}
-                  style={styles.resultImage}
-                  contentFit="contain"
-                />
-              </Pressable>
-            ) : null}
+            </View>
+            {preprocessError ? <Text style={styles.errorText}>{preprocessError}</Text> : null}
+            {landmarkError ? <Text style={styles.errorText}>{landmarkError}</Text> : null}
             {landmarkPoints ? (
               <View style={styles.agingRow}>
                 <Pressable
@@ -2100,11 +2213,11 @@ export default function CreateScreen() {
 
             {activeTab === 'prolab' && (
               <>
-            {/* Section 4: Pro Lab */}
+            {/* Section 4: Lab */}
             <View style={styles.sectionDivider} />
             <View style={styles.sectionHeader}>
               <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>4</Text></View>
-              <ThemedText type="defaultSemiBold">Pro Lab (Canlı)</ThemedText>
+              <ThemedText type="defaultSemiBold">Lab (Canlı)</ThemedText>
             </View>
             <ThemedText style={styles.helperText}>
               Operasyon: {activeProOperations.length > 0 ? activeProOperations.map((operation) => PRO_LABEL[operation]).join(' + ') : 'Kapalı'}
@@ -2112,6 +2225,8 @@ export default function CreateScreen() {
             <View style={styles.warpGrid}>
               {PRO_OPERATIONS.map((op) => {
                 const isActive = activeProOperations.includes(op);
+                const isHovered = hoveredProOperation === op;
+                const intensity = proOperationIntensity[op] ?? LAB_DEFAULT_INTENSITY;
                 return (
                   <Pressable
                     key={op}
@@ -2122,78 +2237,63 @@ export default function CreateScreen() {
                         opacity: preprocessedB64 ? 1 : 0.4,
                       },
                     ]}
+                    onHoverIn={() => setHoveredProOperation(op)}
+                    onHoverOut={() => setHoveredProOperation((current) => current === op ? null : current)}
                     onPress={() => toggleProOperation(op)}
                     disabled={!preprocessedB64}>
-                    <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
-                      {PRO_LABEL[op]}
-                    </ThemedText>
+                    {isActive ? (
+                      <Pressable
+                        pointerEvents={isHovered ? 'auto' : 'none'}
+                        style={[styles.labIntensityControl, styles.labIntensityControlLeft, { opacity: isHovered ? 1 : 0 }]}
+                        onHoverIn={() => setHoveredProOperation(op)}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          adjustProOperationIntensity(op, -LAB_INTENSITY_STEP);
+                        }}>
+                        <ThemedText style={[styles.labIntensityControlText, { color: tintTextColor }]}>-</ThemedText>
+                      </Pressable>
+                    ) : null}
+                    <View style={styles.labOperationLabelWrap}>
+                      <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
+                        {PRO_LABEL[op]}
+                      </ThemedText>
+                      {isActive ? (
+                        <ThemedText style={[styles.labOperationValue, { color: isActive ? tintTextColor : colors.text }]}>
+                          {intensity}%
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                    {isActive ? (
+                      <Pressable
+                        pointerEvents={isHovered ? 'auto' : 'none'}
+                        style={[styles.labIntensityControl, styles.labIntensityControlRight, { opacity: isHovered ? 1 : 0 }]}
+                        onHoverIn={() => setHoveredProOperation(op)}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          adjustProOperationIntensity(op, LAB_INTENSITY_STEP);
+                        }}>
+                        <ThemedText style={[styles.labIntensityControlText, { color: tintTextColor }]}>+</ThemedText>
+                      </Pressable>
+                    ) : null}
                   </Pressable>
                 );
               })}
             </View>
 
-            <View style={styles.presetRow}>
-              {(['natural', 'balanced', 'strong'] as ProPreset[]).map((preset) => (
-                <Pressable
-                  key={preset}
-                  style={[
-                    styles.presetButton,
-                    {
-                      backgroundColor: proPreset === preset ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
-                      opacity: preprocessedB64 ? 1 : 0.45,
-                    },
-                  ]}
-                  onPress={() => applyProPreset(preset)}
-                  disabled={!preprocessedB64}>
-                  <ThemedText style={[styles.warpOpText, { color: proPreset === preset ? tintTextColor : colors.text }]}>
-                    {PRO_PRESET_LABEL[preset]}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </View>
-
-            <ThemedText style={styles.helperText}>Intensity: {proIntensity.toFixed(2)}</ThemedText>
-            <Slider
-              style={styles.nativeSlider}
-              minimumValue={0}
-              maximumValue={1}
-              step={0.01}
-              value={proIntensity}
-              onValueChange={setProIntensity}
-              minimumTrackTintColor={colors.tint}
-              maximumTrackTintColor="rgba(120,120,120,0.25)"
-              thumbTintColor={colors.tint}
-              disabled={!preprocessedB64}
-            />
-
-            <ThemedText style={styles.helperText}>RBF Smooth: {proRbfSmooth.toFixed(1)}</ThemedText>
-            <Slider
-              style={styles.nativeSlider}
-              minimumValue={0.8}
-              maximumValue={10}
-              step={0.1}
-              value={proRbfSmooth}
-              onValueChange={setProRbfSmooth}
-              minimumTrackTintColor={colors.tint}
-              maximumTrackTintColor="rgba(120,120,120,0.25)"
-              thumbTintColor={colors.tint}
-              disabled={!preprocessedB64}
-            />
-
             <Pressable
               style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 && activeProOperations.length > 0 ? 1 : 0.5 }]}
               onPress={applyProLayer}
               disabled={!preprocessedB64 || activeProOperations.length === 0 || proLoading}>
-              <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Uygula Pro Efekti</ThemedText>
+              <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Efekti Uygula</ThemedText>
             </Pressable>
 
             {proLoading ? <ActivityIndicator /> : null}
             {proError ? <Text style={styles.errorText}>{proError}</Text> : null}
 
-            {/* Pro layers display */}
+            {/* Lab layers display */}
             {proLayers.length > 0 && (
               <View style={styles.makeupLayersContainer}>
-                <ThemedText style={styles.makeupLayersTitle}>Pro Efekt Katmanları</ThemedText>
+                <ThemedText style={styles.makeupLayersTitle}>Efekt Katmanları</ThemedText>
                 {proLayers.map((layer, idx) => {
                   return (
                     <View key={layer.id} style={styles.makeupLayerRow}>
@@ -2230,50 +2330,6 @@ export default function CreateScreen() {
               </View>
             )}
 
-            {proResultB64 && preprocessedB64 ? (
-              <View style={styles.compareCard}>
-                <View style={styles.compareHeaderRow}>
-                  <ThemedText style={styles.sideLabel}>Pro Sonuç</ThemedText>
-                  <View style={styles.compareHintPill}>
-                    <ThemedText style={styles.compareHintText}>Basılı tut: Orijinal</ThemedText>
-                  </View>
-                </View>
-
-                <Pressable
-                  style={styles.compareStage}
-                  onPress={() => {
-                    setLightboxUri(`data:image/png;base64,${proResultB64}`);
-                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64}`);
-                  }}>
-                  <Image source={{ uri: `data:image/png;base64,${proResultB64}` }} style={styles.compareImage} contentFit="contain" />
-
-                  {preprocessedB64 ? (
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.compareOverlay,
-                        {
-                          opacity: proCompareOpacity,
-                        },
-                      ]}>
-                      <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.compareImage} contentFit="contain" />
-                      <View style={styles.originalTag}>
-                        <ThemedText style={styles.originalTagText}>Original</ThemedText>
-                      </View>
-                    </Animated.View>
-                  ) : null}
-
-                  <Pressable
-                    style={styles.compareFab}
-                    onPressIn={() => setProCompareHeld(true)}
-                    onPressOut={() => setProCompareHeld(false)}
-                    onPress={() => null}>
-                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
-                  </Pressable>
-                </Pressable>
-              </View>
-            ) : null}
-
             {proResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
               </>
@@ -2293,7 +2349,7 @@ export default function CreateScreen() {
 
             <View style={styles.warpGrid}>
               {ACCESSORY_PRESETS.map((preset) => {
-                const isActive = accessoryTarget === preset.key;
+                const isActive = accessoryEnabled && accessoryTarget === preset.key;
                 return (
                   <Pressable
                     key={preset.key}
@@ -2305,6 +2361,14 @@ export default function CreateScreen() {
                       },
                     ]}
                     onPress={() => {
+                      if (isActive) {
+                        setAccessoryEnabled(false);
+                        setAccessoryResultB64(null);
+                        setMakeupPreviewKind((current) => current === 'accessory' ? null : current);
+                        setAccessoryError(null);
+                        return;
+                      }
+
                       setAccessoryEnabled(true);
                       setAccessoryTarget(preset.key);
                       setAccessoryStyle(preset.defaultStyle);
@@ -2368,19 +2432,6 @@ export default function CreateScreen() {
               {accessoryLoading ? <ActivityIndicator /> : <Ionicons name="sparkles-outline" size={18} color={colors.tint} />}
             </View>
 
-            {accessoryEnabled ? (
-              <Pressable
-                style={[styles.iconActionButton, { backgroundColor: softSurface, borderColor: panelBorder, alignSelf: 'flex-start' }]}
-                onPress={() => {
-                  setAccessoryEnabled(false);
-                  setAccessoryResultB64(null);
-                  setAccessoryError(null);
-                }}>
-                <Ionicons name="close-outline" size={16} color={colors.text} />
-                <ThemedText style={styles.iconActionText}>Aksesuari Kaldir</ThemedText>
-              </Pressable>
-            ) : null}
-
             <ThemedText style={styles.helperText}>Gorunurluk: {Math.round(accessoryIntensity * 100)}%</ThemedText>
             <Slider
               style={styles.nativeSlider}
@@ -2438,48 +2489,6 @@ export default function CreateScreen() {
             />
 
             {accessoryError ? <Text style={styles.errorText}>{accessoryError}</Text> : null}
-
-            {accessoryResultB64 && preprocessedB64 ? (
-              <View style={styles.compareCard}>
-                <View style={styles.compareHeaderRow}>
-                  <ThemedText style={styles.sideLabel}>Aksesuar Sonuc</ThemedText>
-                  <View style={styles.compareHintPill}>
-                    <ThemedText style={styles.compareHintText}>BasilÄ± tut: Orijinal</ThemedText>
-                  </View>
-                </View>
-
-                <Pressable
-                  style={styles.compareStage}
-                  onPress={() => {
-                    setLightboxUri(`data:image/png;base64,${accessoryResultB64}`);
-                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64}`);
-                  }}>
-                  <Image source={{ uri: `data:image/png;base64,${accessoryResultB64}` }} style={styles.compareImage} contentFit="contain" />
-
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.compareOverlay,
-                      {
-                        opacity: proCompareOpacity,
-                      },
-                    ]}>
-                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.compareImage} contentFit="contain" />
-                    <View style={styles.originalTag}>
-                      <ThemedText style={styles.originalTagText}>Original</ThemedText>
-                    </View>
-                  </Animated.View>
-
-                  <Pressable
-                    style={styles.compareFab}
-                    onPressIn={() => setProCompareHeld(true)}
-                    onPressOut={() => setProCompareHeld(false)}
-                    onPress={() => null}>
-                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
-                  </Pressable>
-                </Pressable>
-              </View>
-            ) : null}
 
             {/* Section 6: Hair Color */}
             <View style={[styles.sectionHeader, { marginTop: 4 }]}>
@@ -2586,11 +2595,11 @@ export default function CreateScreen() {
                 styles.cvButton,
                 {
                   backgroundColor: accent,
-                  opacity: (preprocessedB64 ?? selectedImageB64) && !hairColorLoading ? 1 : 0.45,
+                  opacity: fullQualitySourceB64 && !hairColorLoading ? 1 : 0.45,
                 },
               ]}
               onPress={runHairColor}
-              disabled={!(preprocessedB64 ?? selectedImageB64) || hairColorLoading}>
+              disabled={!fullQualitySourceB64 || hairColorLoading}>
               {hairColorLoading
                 ? <ActivityIndicator color="#fff" />
                 : <ThemedText style={[styles.cvButtonText, { color: '#fff' }]}>Rengi Uygula</ThemedText>}
@@ -2598,49 +2607,6 @@ export default function CreateScreen() {
 
             {hairColorError ? (
               <Text style={styles.errorText}>{hairColorError}</Text>
-            ) : null}
-
-            {/* Result compare card */}
-            {hairColorResultB64 && (preprocessedB64 ?? selectedImageB64) ? (
-              <View style={styles.compareCard}>
-                <View style={styles.compareHeaderRow}>
-                  <ThemedText style={styles.sideLabel}>Saç Rengi</ThemedText>
-                  <View style={styles.compareHintPill}>
-                    <ThemedText style={styles.compareHintText}>Basılı tut: Orijinal</ThemedText>
-                  </View>
-                </View>
-
-                <Pressable
-                  style={styles.compareStage}
-                  onPress={() => {
-                    setLightboxUri(`data:image/png;base64,${hairColorResultB64}`);
-                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64 ?? selectedImageB64}`);
-                  }}>
-                  <Image source={{ uri: `data:image/png;base64,${hairColorResultB64}` }} style={styles.compareImage} contentFit="contain" />
-
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.compareOverlay,
-                      {
-                        opacity: proCompareOpacity,
-                      },
-                    ]}>
-                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64 ?? selectedImageB64}` }} style={styles.compareImage} contentFit="contain" />
-                    <View style={styles.originalTag}>
-                      <ThemedText style={styles.originalTagText}>Original</ThemedText>
-                    </View>
-                  </Animated.View>
-
-                  <Pressable
-                    style={styles.compareFab}
-                    onPressIn={() => setProCompareHeld(true)}
-                    onPressOut={() => setProCompareHeld(false)}
-                    onPress={() => null}>
-                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
-                  </Pressable>
-                </Pressable>
-              </View>
             ) : null}
 
             {/* Divider */}
@@ -2783,13 +2749,16 @@ export default function CreateScreen() {
                           setMakeupLayers(updated);
                           if (newVal) {
                             setMakeupResultB64(layer.resultB64);
+                            setMakeupPreviewKind('makeup');
                           } else {
                             // Rebuild from previous locked layer
                             const lastLockedIdx = updated.slice(0, idx).findLastIndex((l) => l.locked);
                             if (lastLockedIdx >= 0) {
                               setMakeupResultB64(updated[lastLockedIdx].resultB64);
+                              setMakeupPreviewKind('makeup');
                             } else {
-                              setMakeupResultB64(preprocessedB64);
+                              setMakeupResultB64(null);
+                              setMakeupPreviewKind((current) => current === 'makeup' ? null : current);
                             }
                           }
                         }}
@@ -2806,8 +2775,10 @@ export default function CreateScreen() {
                           if (updated.length > 0) {
                             // Show the last remaining layer's result
                             setMakeupResultB64(updated[updated.length - 1].resultB64);
+                            setMakeupPreviewKind('makeup');
                           } else {
                             setMakeupResultB64(null);
+                            setMakeupPreviewKind((current) => current === 'makeup' ? null : current);
                           }
                         }}
                         style={styles.makeupLayerDeleteBtn}>
@@ -2818,50 +2789,6 @@ export default function CreateScreen() {
                 })}
               </View>
             )}
-
-            {makeupResultB64 && preprocessedB64 ? (
-              <View style={styles.compareCard}>
-                <View style={styles.compareHeaderRow}>
-                  <ThemedText style={styles.sideLabel}>Makeup Sonuç</ThemedText>
-                  <View style={styles.compareHintPill}>
-                    <ThemedText style={styles.compareHintText}>Basılı tut: Orijinal</ThemedText>
-                  </View>
-                </View>
-
-                <Pressable
-                  style={styles.compareStage}
-                  onPress={() => {
-                    setLightboxUri(`data:image/png;base64,${makeupResultB64}`);
-                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64}`);
-                  }}>
-                  <Image source={{ uri: `data:image/png;base64,${makeupResultB64}` }} style={styles.compareImage} contentFit="contain" />
-
-                  {preprocessedB64 ? (
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.compareOverlay,
-                        {
-                          opacity: proCompareOpacity,
-                        },
-                      ]}>
-                      <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.compareImage} contentFit="contain" />
-                      <View style={styles.originalTag}>
-                        <ThemedText style={styles.originalTagText}>Original</ThemedText>
-                      </View>
-                    </Animated.View>
-                  ) : null}
-
-                  <Pressable
-                    style={styles.compareFab}
-                    onPressIn={() => setProCompareHeld(true)}
-                    onPressOut={() => setProCompareHeld(false)}
-                    onPress={() => null}>
-                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
-                  </Pressable>
-                </Pressable>
-              </View>
-            ) : null}
 
               </>
             )}
@@ -3456,6 +3383,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  landmarkOverlayDot: {
+    position: 'absolute',
+    width: 4,
+    height: 4,
+    marginLeft: -2,
+    marginTop: -2,
+    borderRadius: 2,
+    backgroundColor: '#00E676',
+    borderWidth: 1,
+    borderColor: 'rgba(0,96,48,0.42)',
+  },
   emptyPreview: {
     width: '100%',
     maxWidth: 520,
@@ -3879,6 +3817,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
+  },
+  landmarkToggleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  landmarkToggleLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  landmarkToggleTrack: {
+    width: 44,
+    height: 26,
+    borderRadius: 999,
+    borderWidth: 1,
+    padding: 2,
+    justifyContent: 'center',
+  },
+  landmarkToggleThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
   },
   warpGrid: {
     flexDirection: 'row',
@@ -3888,25 +3853,53 @@ const styles = StyleSheet.create({
   warpOpButton: {
     flex: 1,
     minWidth: '40%',
-    paddingVertical: 11,
+    minHeight: 58,
+    paddingVertical: 10,
+    paddingHorizontal: 36,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
   },
   warpOpText: {
     fontSize: 12,
+    lineHeight: 14,
     fontWeight: '600',
   },
-  presetRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  presetButton: {
-    flex: 1,
-    minHeight: 38,
-    borderRadius: 10,
+  labOperationLabelWrap: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    gap: 3,
+    minHeight: 34,
+  },
+  labOperationValue: {
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 13,
+    opacity: 0.9,
+  },
+  labIntensityControl: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -13,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  labIntensityControlLeft: {
+    left: 8,
+  },
+  labIntensityControlRight: {
+    right: 8,
+  },
+  labIntensityControlText: {
+    fontSize: 17,
+    lineHeight: 20,
+    fontWeight: '900',
   },
   sliderRow: {
     flexDirection: 'row',

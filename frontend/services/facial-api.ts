@@ -170,9 +170,13 @@ export async function preprocessFromUri(uri: string): Promise<any> {
   return requestJson('/api/preprocess', formData);
 }
 
-export async function landmarksFromBase64(imageBase64: string): Promise<any> {
+export async function landmarksFromBase64(
+  imageBase64: string,
+  options?: { landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid' }
+): Promise<any> {
   const formData = new FormData();
   formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
   return requestJson('/api/landmarks', formData);
 }
 

@@ -174,6 +174,7 @@ async def preprocess(image: UploadFile = File(...)):
         "success": True,
         "original_size": [orig_w, orig_h],
         "face_bbox": list(bbox),
+        "processed_size": [processed.shape[1], processed.shape[0]],
         "processed_image_b64": numpy_to_b64(processed),
         "message": "Face detected and preprocessed",
     }
@@ -255,12 +256,19 @@ async def ai_guided_aging(
 
 
 @app.post("/landmarks")
-async def landmarks(image: UploadFile = File(...)):
+async def landmarks(
+    image: UploadFile = File(...),
+    landmark_backend: str = Form("hybrid"),
+):
     try:
         file_bytes = await image.read()
         img = bytes_to_numpy(file_bytes)
 
-        lms = detect_landmarks(img)
+        lms, landmark_info = detect_landmarks_fused(
+            img,
+            backend=landmark_backend,
+            temporal_smoothing=False,
+        )
         if lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected for landmark extraction."}
 
@@ -270,6 +278,8 @@ async def landmarks(image: UploadFile = File(...)):
             "landmarks": [[x, y] for x, y in lms],
             "landmark_image_b64": numpy_to_b64(annotated),
             "landmark_count": len(lms),
+            "landmark_backend": landmark_backend,
+            "landmark_info": landmark_info,
         }
     except Exception as exc:
         return {"error": "Face not detected or model error", "details": str(exc)}

@@ -7,7 +7,6 @@ import { Ionicons } from '@expo/vector-icons';
 
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
-type ProPreset = 'natural' | 'balanced' | 'strong';
 type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
 type LandmarkPoint = { x: number; y: number; z?: number };
 type MakeupProfile = { active: boolean; color: string; intensity: number };
@@ -75,12 +74,12 @@ const PRO_OPERATIONS: ProLiveOperation[] = [
 ];
 
 const PRO_LABEL: Record<ProLiveOperation, string> = {
-  smile_enhancement: 'Pro Smile',
-  brow_lift: 'Pro Brow Lift',
-  lip_plump: 'Pro Lip Plump',
-  slim_face: 'Pro Slim Face',
-  aging: 'Pro Aging',
-  deaging: 'Pro De-Aging',
+  smile_enhancement: 'Smile',
+  brow_lift: 'Brow Lift',
+  lip_plump: 'Lip Plump',
+  slim_face: 'Slim Face',
+  aging: 'Aging',
+  deaging: 'De-Aging',
 };
 
 const PRO_ICON: Record<ProLiveOperation, keyof typeof Ionicons.glyphMap> = {
@@ -123,17 +122,9 @@ const LIVE_LANDMARK_ALPHA = 0.72;
 const IRIS_LEFT = [468, 469, 470, 471, 472];
 const IRIS_RIGHT = [473, 474, 475, 476, 477];
 
-const PRO_PRESET_VALUES: Record<ProPreset, { intensity: number; smooth: number }> = {
-  natural: { intensity: 0.3, smooth: 4.0 },
-  balanced: { intensity: 0.6, smooth: 3.0 },
-  strong: { intensity: 0.85, smooth: 2.0 },
-};
-
-const PRO_PRESET_LABEL: Record<ProPreset, string> = {
-  natural: 'Natural',
-  balanced: 'Balanced',
-  strong: 'Strong',
-};
+const LAB_DEFAULT_INTENSITY = 50;
+const LAB_INTENSITY_STEP = 5;
+const LAB_SMOOTH = 2.8;
 
 const MAKEUP_PRESETS: { key: MakeupTarget; label: string; icon: keyof typeof Ionicons.glyphMap; defaultColor: string }[] = [
   { key: 'lip', label: 'Ruj', icon: 'water-outline', defaultColor: '#D45A73' },
@@ -691,11 +682,16 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const [message, setMessage] = useState('Hazır. Başlat butonuna bas.');
   const [showLandmarks, setShowLandmarks] = useState(false);
   const [fps, setFps] = useState(0);
-  const [proOperation, setProOperation] = useState<ProLiveOperation>('smile_enhancement');
   const [activeProOperations, setActiveProOperations] = useState<ProLiveOperation[]>([]);
-  const [proPreset, setProPreset] = useState<ProPreset>('balanced');
-  const [proIntensity, setProIntensity] = useState(0);
-  const [proSmooth, setProSmooth] = useState(PRO_PRESET_VALUES.balanced.smooth);
+  const [proOperationIntensity, setProOperationIntensity] = useState<Record<ProLiveOperation, number>>({
+    smile_enhancement: LAB_DEFAULT_INTENSITY,
+    brow_lift: LAB_DEFAULT_INTENSITY,
+    lip_plump: LAB_DEFAULT_INTENSITY,
+    slim_face: LAB_DEFAULT_INTENSITY,
+    aging: LAB_DEFAULT_INTENSITY,
+    deaging: LAB_DEFAULT_INTENSITY,
+  });
+  const [hoveredProOperation, setHoveredProOperation] = useState<ProLiveOperation | null>(null);
   const [proLabEnabled, setProLabEnabled] = useState(false);
   const [makeupTarget, setMakeupTarget] = useState<MakeupTarget>('lip');
   const [makeupProfiles, setMakeupProfiles] = useState<Record<MakeupTarget, MakeupProfile>>(DEFAULT_MAKEUP_PROFILE);
@@ -709,7 +705,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   });
   const [splitScreen, setSplitScreen] = useState(true);
   const intensitiesRef = useRef(intensities);
-  const proRef = useRef({ operation: proOperation, operations: activeProOperations, intensity: proIntensity, smooth: proSmooth });
+  const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
   const proLabEnabledRef = useRef(proLabEnabled);
   const makeupRef = useRef({ target: makeupTarget, profiles: makeupProfiles, enabled: makeupEnabled });
   const showLandmarksRef = useRef(showLandmarks);
@@ -717,8 +713,8 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   useEffect(() => { intensitiesRef.current = intensities; }, [intensities]);
   useEffect(() => {
-    proRef.current = { operation: proOperation, operations: activeProOperations, intensity: proIntensity, smooth: proSmooth };
-  }, [activeProOperations, proOperation, proIntensity, proSmooth]);
+    proRef.current = { operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH };
+  }, [activeProOperations, proOperationIntensity]);
   useEffect(() => {
     proLabEnabledRef.current = proLabEnabled;
   }, [proLabEnabled]);
@@ -776,10 +772,14 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     const now = performance.now();
     const pro = proRef.current;
     const proEnabled = proLabEnabledRef.current;
+    const activeLiveOperations = proEnabled
+      ? pro.operations.filter((operation) => (pro.intensities[operation] ?? LAB_DEFAULT_INTENSITY) > 0)
+      : [];
     const agingOperation = proEnabled
-      ? (pro.operations.find((operation) => operation === 'aging' || operation === 'deaging') as 'aging' | 'deaging' | undefined) ?? null
+      ? (activeLiveOperations.find((operation) => operation === 'aging' || operation === 'deaging') as 'aging' | 'deaging' | undefined) ?? null
       : null;
     const agingMode = agingOperation !== null;
+    const agingIntensity = agingOperation ? (pro.intensities[agingOperation] ?? LAB_DEFAULT_INTENSITY) / 100 : 0;
     const agingInterval = agingOperation === 'deaging' ? LIVE_DEAGING_INTERVAL_MS : LIVE_AGING_INTERVAL_MS;
 
     if (agingMode && previewInFlightRef.current && now - lastPreviewStartAtRef.current > LIVE_AGING_TIMEOUT_MS) {
@@ -795,7 +795,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
         if (agingPreviewImageRef.current) {
           ctx.drawImage(agingPreviewImageRef.current, 0, 0, W, H);
         } else {
-          ctx.filter = getLiveFilter(agingOperation, pro.intensity);
+          ctx.filter = getLiveFilter(agingOperation, agingIntensity);
           ctx.drawImage(video, 0, 0, W, H);
           ctx.filter = 'none';
         }
@@ -803,12 +803,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       } else if (agingPreviewImageRef.current) {
         ctx.drawImage(agingPreviewImageRef.current, 0, 0, W, H);
       } else {
-        ctx.filter = getLiveFilter(agingOperation, pro.intensity);
+        ctx.filter = getLiveFilter(agingOperation, agingIntensity);
         ctx.drawImage(video, 0, 0, W, H);
         ctx.filter = 'none';
       }
 
-      if (pro.intensity > 0.05 && !previewInFlightRef.current && now - lastPreviewRequestAtRef.current > agingInterval) {
+      if (agingIntensity > 0.05 && !previewInFlightRef.current && now - lastPreviewRequestAtRef.current > agingInterval) {
         lastPreviewRequestAtRef.current = now;
         previewInFlightRef.current = true;
         lastPreviewStartAtRef.current = now;
@@ -838,7 +838,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
                 if (!agingOperation) return;
 
-                const data = await frequencyProFromBase64(previewBase64, agingOperation, pro.intensity, {
+                const data = await frequencyProFromBase64(previewBase64, agingOperation, agingIntensity, {
                   landmarkBackend: 'hybrid',
                   temporalSmoothing: false,
                   emaAlpha: 0.5,
@@ -920,10 +920,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     const cur = intensitiesRef.current;
     const liveEffects: Record<EffectId, number> = { ...cur };
     if (proEnabled) {
-      for (const operation of pro.operations) {
+      for (const operation of activeLiveOperations) {
         const activeEffect = PRO_EFFECT_MAP[operation];
         if (activeEffect) {
-          liveEffects[activeEffect] = Math.max(liveEffects[activeEffect], pro.intensity);
+          liveEffects[activeEffect] = Math.max(liveEffects[activeEffect], (pro.intensities[operation] ?? LAB_DEFAULT_INTENSITY) / 100);
         }
       }
     }
@@ -1023,8 +1023,8 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
           const k11 = k10 + 1;
 
           const offsetX = 0;
-          drawTri(ctx, video, srcG[k00], srcG[k01], srcG[k11], dstG[k00], dstG[k01], dstG[k11], W, H, pro.operation, pro.intensity, offsetX);
-          drawTri(ctx, video, srcG[k00], srcG[k11], srcG[k10], dstG[k00], dstG[k11], dstG[k10], W, H, pro.operation, pro.intensity, offsetX);
+          drawTri(ctx, video, srcG[k00], srcG[k01], srcG[k11], dstG[k00], dstG[k01], dstG[k11], W, H, activeLiveOperations[0] ?? 'smile_enhancement', 0, offsetX);
+          drawTri(ctx, video, srcG[k00], srcG[k11], srcG[k10], dstG[k00], dstG[k11], dstG[k10], W, H, activeLiveOperations[0] ?? 'smile_enhancement', 0, offsetX);
         }
       }
     }
@@ -1130,11 +1130,17 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   const resetSliders = () => {
     setIntensities({ smile: 0, slim: 0, brow: 0, lip: 0 });
-    setProOperation('smile_enhancement');
     setActiveProOperations([]);
-    setProPreset('balanced');
-    setProIntensity(0);
-    setProSmooth(PRO_PRESET_VALUES.balanced.smooth);
+    setHoveredProOperation(null);
+    setProOperationIntensity({
+      smile_enhancement: LAB_DEFAULT_INTENSITY,
+      brow_lift: LAB_DEFAULT_INTENSITY,
+      lip_plump: LAB_DEFAULT_INTENSITY,
+      slim_face: LAB_DEFAULT_INTENSITY,
+      aging: LAB_DEFAULT_INTENSITY,
+      deaging: LAB_DEFAULT_INTENSITY,
+    });
+    setProLabEnabled(false);
     setMakeupTarget('lip');
     setMakeupProfiles(DEFAULT_MAKEUP_PROFILE);
     setMakeupEnabled(false);
@@ -1142,35 +1148,39 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     smoothedLandmarksRef.current = null;
   };
 
-  const applyPreset = (preset: ProPreset) => {
-    setProPreset(preset);
-    setProLabEnabled(activeProOperations.length > 0);
-    setProIntensity(PRO_PRESET_VALUES[preset].intensity);
-    setProSmooth(PRO_PRESET_VALUES[preset].smooth);
-  };
-
   const activateProOperation = (operation: ProLiveOperation) => {
-    setProOperation(operation);
     setActiveProOperations((current) => {
-      const next = current.includes(operation)
-        ? current.filter((item) => item !== operation)
-        : [...current, operation];
+      if (current.includes(operation)) {
+        const next = current.filter((item) => item !== operation);
+        setProLabEnabled(next.length > 0);
+        return next;
+      }
+
+      setProOperationIntensity((values) => ({
+        ...values,
+        [operation]: LAB_DEFAULT_INTENSITY,
+      }));
+      const next = [...current, operation];
       setProLabEnabled(next.length > 0);
       return next;
     });
-    setProIntensity((value) => (value > 0.005 ? value : PRO_PRESET_VALUES[proPreset].intensity));
   };
 
-  const toggleProLab = () => {
-    setProLabEnabled((enabled) => {
-      const nextEnabled = !enabled;
-      if (nextEnabled) {
-        setActiveProOperations((current) => (current.length > 0 ? current : [proOperation]));
-        setProIntensity((value) => (value > 0.005 ? value : PRO_PRESET_VALUES[proPreset].intensity));
-      } else {
-        setActiveProOperations([]);
+  const adjustProOperationIntensity = (operation: ProLiveOperation, delta: number) => {
+    setProOperationIntensity((values) => {
+      const nextValue = clamp((values[operation] ?? LAB_DEFAULT_INTENSITY) + delta, 0, 100);
+      if (nextValue === 0) {
+        setActiveProOperations((current) => {
+          const next = current.filter((item) => item !== operation);
+          setProLabEnabled(next.length > 0);
+          return next;
+        });
       }
-      return nextEnabled;
+
+      return {
+        ...values,
+        [operation]: nextValue,
+      };
     });
   };
 
@@ -1297,23 +1307,19 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
             </View>
 
             <View style={styles.sectionRow}>
-              <Text style={[styles.sectionLabel, { color: muted }]}>PRO LAB</Text>
-              <Pressable
-                onPress={toggleProLab}
-                style={[
-                  styles.miniSwitch,
-                  { backgroundColor: proLabEnabled ? accent : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
-                ]}>
-                <View style={[styles.miniSwitchThumb, proLabEnabled ? styles.miniSwitchThumbOn : null]} />
-              </Pressable>
+              <Text style={[styles.sectionLabel, { color: muted }]}>LAB</Text>
             </View>
             <View style={styles.operationGrid}>
               {PRO_OPERATIONS.map((operation) => {
                 const active = proLabEnabled && activeProOperations.includes(operation);
+                const hovered = hoveredProOperation === operation;
+                const intensity = proOperationIntensity[operation] ?? LAB_DEFAULT_INTENSITY;
                 return (
                   <Pressable
                     key={operation}
                     onPress={() => activateProOperation(operation)}
+                    onHoverIn={() => setHoveredProOperation(operation)}
+                    onHoverOut={() => setHoveredProOperation((current) => current === operation ? null : current)}
                     style={[
                       styles.operationButton,
                       {
@@ -1321,65 +1327,40 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                         borderColor: active ? accent : panelBorder,
                       },
                     ]}>
-                    <Ionicons name={PRO_ICON[operation]} size={15} color={active ? '#fff' : accent} />
-                    <Text style={[styles.operationText, { color: active ? '#fff' : text }]}>{PRO_LABEL[operation]}</Text>
+                    {active ? (
+                      <Pressable
+                        pointerEvents={hovered ? 'auto' : 'none'}
+                        onHoverIn={() => setHoveredProOperation(operation)}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          adjustProOperationIntensity(operation, -LAB_INTENSITY_STEP);
+                        }}
+                        style={[styles.liveLabAdjust, styles.liveLabAdjustLeft, { opacity: hovered ? 1 : 0 }]}>
+                        <Text style={styles.liveLabAdjustText}>-</Text>
+                      </Pressable>
+                    ) : null}
+                    <View style={styles.liveLabLabelWrap}>
+                      <Ionicons name={PRO_ICON[operation]} size={15} color={active ? '#fff' : accent} />
+                      <Text style={[styles.operationText, { color: active ? '#fff' : text }]}>{PRO_LABEL[operation]}</Text>
+                      {active ? (
+                        <Text style={[styles.liveLabValue, { color: '#fff' }]}>{intensity}%</Text>
+                      ) : null}
+                    </View>
+                    {active ? (
+                      <Pressable
+                        pointerEvents={hovered ? 'auto' : 'none'}
+                        onHoverIn={() => setHoveredProOperation(operation)}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          adjustProOperationIntensity(operation, LAB_INTENSITY_STEP);
+                        }}
+                        style={[styles.liveLabAdjust, styles.liveLabAdjustRight, { opacity: hovered ? 1 : 0 }]}>
+                        <Text style={styles.liveLabAdjustText}>+</Text>
+                      </Pressable>
+                    ) : null}
                   </Pressable>
                 );
               })}
-            </View>
-
-            <View style={styles.presetRow}>
-              {(['natural', 'balanced', 'strong'] as ProPreset[]).map((preset) => {
-                const active = proLabEnabled && proPreset === preset;
-                return (
-                  <Pressable
-                    key={preset}
-                    onPress={() => applyPreset(preset)}
-                    style={[
-                      styles.presetButton,
-                      {
-                        backgroundColor: active ? accent : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: active ? accent : panelBorder,
-                      },
-                    ]}>
-                    <Text style={[styles.presetText, { color: active ? '#fff' : text }]}>{PRO_PRESET_LABEL[preset]}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <View style={styles.sliderBlock}>
-              <View style={styles.sliderHeader}>
-                <Text style={[styles.sliderLabel, { color: text }]}>Intensity</Text>
-                <Text style={[styles.sliderValue, { color: muted }]}>{proIntensity.toFixed(2)}</Text>
-              </View>
-              <Slider
-                value={proIntensity}
-                onValueChange={setProIntensity}
-                minimumValue={0}
-                maximumValue={1}
-                step={0.01}
-                minimumTrackTintColor={accent}
-                maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'}
-                thumbTintColor={accent}
-              />
-            </View>
-
-            <View style={styles.sliderBlock}>
-              <View style={styles.sliderHeader}>
-                <Text style={[styles.sliderLabel, { color: text }]}>RBF Smooth</Text>
-                <Text style={[styles.sliderValue, { color: muted }]}>{proSmooth.toFixed(1)}</Text>
-              </View>
-              <Slider
-                value={proSmooth}
-                onValueChange={setProSmooth}
-                minimumValue={0.8}
-                maximumValue={10}
-                step={0.1}
-                minimumTrackTintColor={accent}
-                maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'}
-                thumbTintColor={accent}
-              />
             </View>
 
             <Text style={[styles.sectionLabel, { color: muted }]}>MANUEL KARIŞIM</Text>
@@ -1729,33 +1710,53 @@ const styles = StyleSheet.create({
   },
   operationButton: {
     width: '48%',
-    minHeight: 42,
+    minHeight: 58,
     borderRadius: 14,
     borderWidth: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
+    paddingHorizontal: 34,
+    paddingVertical: 8,
+    position: 'relative',
   },
   operationText: {
     fontSize: 10,
+    lineHeight: 12,
     fontWeight: '900',
   },
-  presetRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  presetButton: {
-    flex: 1,
-    height: 36,
-    borderRadius: 13,
-    borderWidth: 1,
+  liveLabLabelWrap: {
+    minHeight: 38,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 3,
   },
-  presetText: {
+  liveLabValue: {
     fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '900',
+  },
+  liveLabAdjust: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -13,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.20)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  liveLabAdjustLeft: {
+    left: 7,
+  },
+  liveLabAdjustRight: {
+    right: 7,
+  },
+  liveLabAdjustText: {
+    color: '#fff',
+    fontSize: 17,
+    lineHeight: 20,
     fontWeight: '900',
   },
   manualGrid: {
