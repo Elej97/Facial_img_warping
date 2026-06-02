@@ -70,6 +70,7 @@ def _get_insight_app():
 
 from modules.aging import apply_aging, apply_deaging
 from modules.accessory_service import apply_accessory
+from modules.hair_segmentation import apply_hair_color
 from modules.evaluation_metrics import compute_quality_metrics
 from modules.landmark import detect_landmarks, draw_landmarks
 from modules.landmark_fusion import detect_landmarks_fused
@@ -783,6 +784,50 @@ async def pro_apply_accessory(
         }
     except Exception as exc:
         return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+@app.post("/pro/hair-color")
+async def pro_hair_color(
+    image: UploadFile = File(...),
+    hex_color: str = Form(...),
+    intensity: float = Form(0.85),
+    preserve_highlights: bool = Form(True),
+):
+    """
+    Professional hair recoloring.
+
+    - hex_color: Target color in #RRGGBB format (e.g. "#A020F0").
+    - intensity: 0.0 (no change) – 1.0 (full replacement). Default 0.85.
+    - preserve_highlights: Keep specular shine areas. Default True.
+
+    Returns: { success, result_image_b64, hex_color, intensity }
+    """
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        valid, err = validate_image(file_bytes, image.filename or "upload.jpg")
+        if not valid:
+            return {"success": False, "error": err, "details": err}
+
+        img = bytes_to_numpy(file_bytes)
+
+        result_img = apply_hair_color(
+            img,
+            hex_color=hex_color,
+            intensity=intensity,
+            preserve_highlights=preserve_highlights,
+        )
+
+        return {
+            "success": True,
+            "hex_color": hex_color.lstrip("#").upper(),
+            "intensity": round(intensity, 3),
+            "result_image_b64": numpy_to_b64(result_img),
+        }
+    except ValueError as exc:
+        return {"success": False, "error": "Invalid parameter", "details": str(exc)}
+    except Exception as exc:
+        return {"success": False, "error": "Hair color failed", "details": str(exc)}
 
 
 def _parse_optional_float(value: str | None) -> float | None:

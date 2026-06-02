@@ -404,6 +404,35 @@ export async function applyMakeupFromBase64(
   return requestJson('/api/pro/apply-makeup', formData);
 }
 
+/**
+ * Professional hair recoloring.
+ *
+ * @param imageBase64  Source image as raw base64 (no data-URI prefix needed).
+ * @param hexColor     Target hair color, e.g. "#A020F0".
+ * @param intensity    0.0 – 1.0. Default 0.85.
+ * @param preserveHighlights  Keep specular shine. Default true.
+ */
+export async function applyHairColorFromBase64(
+  imageBase64: string,
+  hexColor: string,
+  intensity: number = 0.85,
+  preserveHighlights: boolean = true,
+): Promise<{
+  success: boolean;
+  hex_color?: string;
+  intensity?: number;
+  result_image_b64?: string;
+  error?: string;
+  details?: string;
+}> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('hex_color', hexColor.startsWith('#') ? hexColor : `#${hexColor}`);
+  formData.append('intensity', String(Math.max(0, Math.min(1, intensity))));
+  formData.append('preserve_highlights', String(preserveHighlights));
+  return requestJson('/api/pro/hair-color', formData);
+}
+
 export type AccessoryType = 'glasses' | 'mustache' | 'hat';
 export type AccessoryStyle = 'classic' | 'round' | 'aviator' | 'heart' | 'handlebar' | 'chevron' | 'cowboy' | 'cap' | 'asian' | 'newasian' | 'pink';
 
