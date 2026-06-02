@@ -1721,6 +1721,7 @@ export default function CreateScreen() {
   const activeAccessoryPreset = ACCESSORY_PRESETS.find((item) => item.key === accessoryTarget) ?? ACCESSORY_PRESETS[0];
   const getCurrentResultB64 = () => {
     if (activeTab === 'prolab' && proResultB64) return proResultB64;
+    if (activeTab === 'makeup' && hairColorResultB64) return hairColorResultB64;
     if (activeTab === 'makeup' && makeupResultB64) return makeupResultB64;
     if (activeTab === 'makeup' && accessoryResultB64) return accessoryResultB64;
     if (activeTab === 'expression' && expressionTransferResultB64) return expressionTransferResultB64;
@@ -2599,27 +2600,46 @@ export default function CreateScreen() {
               <Text style={styles.errorText}>{hairColorError}</Text>
             ) : null}
 
-            {/* Result side-by-side */}
-            {hairColorResultB64 ? (
-              <View style={styles.sideBySide}>
-                <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Orijinal</ThemedText>
-                  <Image
-                    source={{ uri: `data:image/png;base64,${preprocessedB64 ?? selectedImageB64}` }}
-                    style={styles.sideImage}
-                    contentFit="contain"
-                  />
-                </View>
-                <View style={styles.sideBox}>
+            {/* Result compare card */}
+            {hairColorResultB64 && (preprocessedB64 ?? selectedImageB64) ? (
+              <View style={styles.compareCard}>
+                <View style={styles.compareHeaderRow}>
                   <ThemedText style={styles.sideLabel}>Saç Rengi</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${hairColorResultB64}`)}>
-                    <Image
-                      source={{ uri: `data:image/png;base64,${hairColorResultB64}` }}
-                      style={styles.sideImage}
-                      contentFit="contain"
-                    />
-                  </Pressable>
+                  <View style={styles.compareHintPill}>
+                    <ThemedText style={styles.compareHintText}>Basılı tut: Orijinal</ThemedText>
+                  </View>
                 </View>
+
+                <Pressable
+                  style={styles.compareStage}
+                  onPress={() => {
+                    setLightboxUri(`data:image/png;base64,${hairColorResultB64}`);
+                    setLightboxCompareUri(`data:image/png;base64,${preprocessedB64 ?? selectedImageB64}`);
+                  }}>
+                  <Image source={{ uri: `data:image/png;base64,${hairColorResultB64}` }} style={styles.compareImage} contentFit="contain" />
+
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.compareOverlay,
+                      {
+                        opacity: proCompareOpacity,
+                      },
+                    ]}>
+                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64 ?? selectedImageB64}` }} style={styles.compareImage} contentFit="contain" />
+                    <View style={styles.originalTag}>
+                      <ThemedText style={styles.originalTagText}>Original</ThemedText>
+                    </View>
+                  </Animated.View>
+
+                  <Pressable
+                    style={styles.compareFab}
+                    onPressIn={() => setProCompareHeld(true)}
+                    onPressOut={() => setProCompareHeld(false)}
+                    onPress={() => null}>
+                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
+                  </Pressable>
+                </Pressable>
               </View>
             ) : null}
 
