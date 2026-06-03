@@ -415,9 +415,11 @@ class ProWarpManager:
         center = np.mean([landmarks[i] for i in center_ids], axis=0)
         cx, cy = float(center[0]), float(center[1])
 
-        # Robust lip radius: 85th-percentile distance of all lip pts from center.
+        # Robust lip radius: 90th-percentile distance of all lip pts from center,
+        # widened slightly so the plumping reaches the full lip body (not just
+        # the very center) while still falling to zero before the skin around it.
         dists = np.linalg.norm(lip_pts - np.array([[cx, cy]]), axis=1)
-        lip_radius = float(np.percentile(dists, 85))
+        lip_radius = float(np.percentile(dists, 90)) * 1.15
 
         # Backward remap: each output pixel samples from a position pulled toward
         # the lip center. Pixels near the center shift the most; the pull field
@@ -431,9 +433,11 @@ class ProWarpManager:
         dy = grid_y - cy
         r  = np.sqrt(dx * dx + dy * dy) + 1e-6
 
-        # (1 - r/R)^2 falloff: smooth, zero at R, no discontinuity.
+        # (1 - r/R)^2 falloff: smooth, zero at R, no discontinuity. The 0.9 gain
+        # (was 0.28, which was barely visible) gives a clearly fuller lip while
+        # the falloff keeps the warp seamless at the lip boundary.
         radial_weight = np.clip(1.0 - r / lip_radius, 0.0, 1.0) ** 2
-        pull = float(intensity) * 0.28 * radial_weight
+        pull = float(intensity) * 0.9 * radial_weight
 
         map_x = np.clip(grid_x - dx * pull, 0, w - 1)
         map_y = np.clip(grid_y - dy * pull, 0, h - 1)
@@ -594,31 +598,24 @@ class ProWarpManager:
         h, w = image_np.shape[:2]
         scale = float(min(image_np.shape[:2]))
         intensity_eff = float(np.clip(intensity, 0.0, 1.0))
-        flow_x = np.zeros((h, w), dtype=np.float32)
-        flow_y = np.zeros((h, w), dtype=np.float32)
 
+        # Per-landmark upward lift as a fraction of face scale. Brow-arc peak
+        # points lift the most; tail points less, for a natural arch.
         lift_strength = {
             70: 0.020, 63: 0.016, 105: 0.016, 66: 0.014, 107: 0.013,
             300: 0.020, 293: 0.016, 334: 0.016, 296: 0.014, 336: 0.013,
         }
-        sigma_x = scale * 0.026
-        sigma_y = scale * 0.016
-        lower_bleed_px = scale * 0.020
 
-        for lm_id in brows:
-            if lm_id >= n:
-                continue
-            _add_brow_lift_flow(
-                flow_y,
-                landmarks[lm_id],
-                -scale * lift_strength.get(lm_id, 0.011) * intensity_eff,
-                sigma_x=sigma_x,
-                sigma_y=sigma_y,
-                lower_bleed_px=lower_bleed_px,
-            )
-
+        # Smooth global RBF warp: each brow control point is moved up by its
+        # lift amount while the eye landmarks are pinned (dst == src → zero
+        # displacement). This replaces the old localized vertical flow warp,
+        # which left the forehead above the brow fixed and so produced a
+        # "ghost brow" smear. The RBF spreads the deformation smoothly across
+        # the forehead and never tears the brow/eyelid boundary.
         src = np.array([landmarks[i] for i in brows], dtype=np.float32)
         dst = src.copy()
+        for k, lm_id in enumerate(brows):
+            dst[k, 1] -= scale * lift_strength.get(lm_id, 0.011) * intensity_eff
 
         # Eye landmarks added as zero-displacement anchors: the RBF is forced
         # to produce zero displacement at the eye boundary, preventing the eyes
@@ -640,7 +637,6 @@ class ProWarpManager:
 
         face_points = self._face_points(landmarks)
         warped = self._rbf_warp(image_np, src_rbf, dst_rbf, face_points, smooth=min(smooth, 1.8))
-        warped = _flow_warp(image_np, flow_x, flow_y)
 
         # Brow blend zone: brow arcs + forehead top + upper eyelid boundary.
         h, w = image_np.shape[:2]
