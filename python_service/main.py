@@ -31,42 +31,25 @@ def _parse_allowed_origins() -> list[str]:
 _ALLOWED_ORIGINS = _parse_allowed_origins()
 
 # insightface and DeepFace are used ONLY for age estimation (see
-# _estimate_age_from_image). DeepFace in particular pulls in TensorFlow (~2 GB
-# RAM) at import time. Loading them eagerly made the whole service fail to start
-# under memory pressure — even though face detection, landmarks and warping never
-# touch them. So both are imported lazily, on first age-estimation request.
-# Sentinel values: None = not yet attempted, False = load failed, else the object.
-_deepface = None
-_insight_app = None
+# _estimate_age_from_image). They are imported eagerly at startup so the first
+# age-estimation request (e.g. live Pro Aging) does not stall while loading
+# ~2 GB of models inside the request handler. NOTE: this means the service needs
+# enough RAM to load these at boot — if startup fails under memory pressure,
+# revisit lazy loading but offload the load to a thread executor.
+try:
+    from deepface import DeepFace
+except Exception:
+    DeepFace = None
 
-
-def _get_deepface():
-    """Import DeepFace on first use; cache the module (or False on failure)."""
-    global _deepface
-    if _deepface is None:
-        try:
-            from deepface import DeepFace as _DF
-            _deepface = _DF
-        except Exception:
-            _deepface = False
-    return _deepface or None
-
-
-def _get_insight_app():
-    """Build the insightface age/detection model on first use; cache it."""
-    global _insight_app
-    if _insight_app is None:
-        try:
-            from insightface.app import FaceAnalysis
-            app_ = FaceAnalysis(
-                allowed_modules=["detection", "genderage"],
-                providers=["CPUExecutionProvider"],
-            )
-            app_.prepare(ctx_id=-1, det_size=(320, 320))
-            _insight_app = app_
-        except Exception:
-            _insight_app = False
-    return _insight_app or None
+try:
+    from insightface.app import FaceAnalysis as _InsightFaceAnalysis
+    _insight_app = _InsightFaceAnalysis(
+        allowed_modules=["detection", "genderage"],
+        providers=["CPUExecutionProvider"],
+    )
+    _insight_app.prepare(ctx_id=-1, det_size=(320, 320))
+except Exception:
+    _insight_app = None
 
 from modules.aging import apply_aging, apply_deaging
 from modules.accessory_service import apply_accessory
@@ -102,10 +85,9 @@ warn_missing_ai_dependencies()
 _AGE_FALLBACK = 30
 def _estimate_age_from_image(img: np.ndarray) -> tuple[float, bool]:
     """Returns (estimated_age, is_estimated). Tries insightface → DeepFace → fallback."""
-    insight_app = _get_insight_app()
-    if insight_app is not None:
+    if _insight_app is not None:
         try:
-            faces = insight_app.get(img)
+            faces = _insight_app.get(img)
             if faces:
                 age = getattr(faces[0], "age", None)
                 if age is not None:
@@ -113,10 +95,9 @@ def _estimate_age_from_image(img: np.ndarray) -> tuple[float, bool]:
         except Exception:
             pass
 
-    deepface = _get_deepface()
-    if deepface is not None:
+    if DeepFace is not None:
         try:
-            result = deepface.analyze(
+            result = DeepFace.analyze(
                 img_path=img,
                 actions=["age"],
                 detector_backend="opencv",
