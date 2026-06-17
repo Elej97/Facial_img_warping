@@ -102,6 +102,20 @@ pip install -r requirements.txt
 
 Gereklilikler: `fastapi`, `uvicorn`, `opencv-python-headless`, `mediapipe`, `numpy`, `scipy`, `Pillow`
 
+### 3. SAM Model Dosyası (Yaşlandırma için zorunlu)
+
+`sam_ffhq_aging.pt` dosyası 2.1 GB olduğundan Git'e dahil edilmemiştir.
+Projeyi ilk kez kuruyorsan aşağıdaki scripti çalıştır — model otomatik indirilir:
+
+```bash
+python python_service/download_models.py
+```
+
+> Model kaynağı: [yuval-alaluf/SAM](https://github.com/yuval-alaluf/SAM) (Style-based Age Manipulation)
+> İndirme yaklaşık 2.1 GB veri gerektirir, internet bağlantısına göre 5–15 dakika sürebilir.
+
+İndirme tamamlandığında dosya `python_service/models/sam_ffhq_aging.pt` konumunda olmalıdır.
+
 ## Calistirma
 
 Her uc servisi ayri terminalde baslatın:
