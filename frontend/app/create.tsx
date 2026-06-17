@@ -425,7 +425,7 @@ export default function CreateScreen() {
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const [lightboxCompareUri, setLightboxCompareUri] = useState<string | null>(null);
 
-  type TabKey = 'analysis' | 'expression' | 'prolab' | 'makeup';
+  type TabKey = 'analysis' | 'expression' | 'prolab' | 'makeup' | 'accessory';
   const [activeTab, setActiveTab] = useState<TabKey>('analysis');
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
@@ -1560,6 +1560,20 @@ export default function CreateScreen() {
     });
   };
 
+  const updateProOperationIntensity = (operation: ProOperation, value: number) => {
+    setProOperationIntensity((values) => {
+      const nextValue = clamp(value, 0, 100);
+      if (nextValue === 0) {
+        setActiveProOperations((current) => current.filter((item) => item !== operation));
+      }
+
+      return {
+        ...values,
+        [operation]: nextValue,
+      };
+    });
+  };
+
   useEffect(() => {
     if (!preprocessedB64 || !accessoryEnabled) {
       setAccessoryResultB64(null);
@@ -1830,11 +1844,11 @@ export default function CreateScreen() {
   const getCurrentResultB64 = () => {
     if (activeTab === 'prolab' && proResultB64) return proResultB64;
     if (activeTab === 'makeup') {
-      if (makeupPreviewKind === 'accessory' && accessoryResultB64) return accessoryResultB64;
       if (makeupPreviewKind === 'makeup' && makeupResultB64) return makeupResultB64;
       if (makeupPreviewKind === 'hair' && hairColorResultB64) return hairColorResultB64;
-      return accessoryResultB64 ?? makeupResultB64 ?? hairColorResultB64;
+      return makeupResultB64 ?? hairColorResultB64;
     }
+    if (activeTab === 'accessory' && accessoryResultB64) return accessoryResultB64;
     if (activeTab === 'expression' && expressionTransferResultB64) return expressionTransferResultB64;
     return null;
   };
@@ -2022,9 +2036,9 @@ export default function CreateScreen() {
             
             {/* Vertical Toolbar */}
             <View style={{ width: 64, borderRightWidth: 1, borderRightColor: panelBorder, backgroundColor: colorScheme === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)', paddingTop: 20, alignItems: 'center', gap: 20 }}>
-              {(['analysis', 'expression', 'prolab', 'makeup'] as TabKey[]).map((tab) => {
-                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'Lab', makeup: 'Makyaj' };
-                  const icons: Record<TabKey, any> = { analysis: 'scan-outline', expression: 'happy-outline', prolab: 'flask-outline', makeup: 'color-palette-outline' };
+              {(['analysis', 'expression', 'prolab', 'makeup', 'accessory'] as TabKey[]).map((tab) => {
+                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'Lab', makeup: 'Makyaj', accessory: 'Aksesuar' };
+                  const icons: Record<TabKey, any> = { analysis: 'scan-outline', expression: 'happy-outline', prolab: 'flask-outline', makeup: 'color-palette-outline', accessory: 'glasses-outline' };
                   const isActive = activeTab === tab;
                   return (
                     <Pressable
@@ -2235,12 +2249,28 @@ export default function CreateScreen() {
                       {
                         backgroundColor: isActive ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
                         opacity: preprocessedB64 ? 1 : 0.4,
+                        paddingHorizontal: isActive ? 12 : 36,
+                        paddingVertical: isActive ? 12 : 10,
+                        minHeight: 98,
                       },
                     ]}
                     onHoverIn={() => setHoveredProOperation(op)}
                     onHoverOut={() => setHoveredProOperation((current) => current === op ? null : current)}
-                    onPress={() => toggleProOperation(op)}
-                    disabled={!preprocessedB64}>
+                    onPress={isActive ? undefined : () => toggleProOperation(op)}
+                    disabled={!preprocessedB64 && !isActive}>
+                    <Pressable
+                      style={styles.labOperationLabelWrap}
+                      onPress={() => toggleProOperation(op)}
+                      disabled={!preprocessedB64}>
+                      <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
+                        {PRO_LABEL[op]}
+                      </ThemedText>
+                      {isActive ? (
+                        <ThemedText style={[styles.labOperationValue, { color: isActive ? tintTextColor : colors.text }]}>
+                          {intensity}%
+                        </ThemedText>
+                      ) : null}
+                    </Pressable>
                     {isActive ? (
                       <Pressable
                         pointerEvents={isHovered ? 'auto' : 'none'}
@@ -2253,16 +2283,6 @@ export default function CreateScreen() {
                         <ThemedText style={[styles.labIntensityControlText, { color: tintTextColor }]}>-</ThemedText>
                       </Pressable>
                     ) : null}
-                    <View style={styles.labOperationLabelWrap}>
-                      <ThemedText style={[styles.warpOpText, { color: isActive ? tintTextColor : colors.text }]}>
-                        {PRO_LABEL[op]}
-                      </ThemedText>
-                      {isActive ? (
-                        <ThemedText style={[styles.labOperationValue, { color: isActive ? tintTextColor : colors.text }]}>
-                          {intensity}%
-                        </ThemedText>
-                      ) : null}
-                    </View>
                     {isActive ? (
                       <Pressable
                         pointerEvents={isHovered ? 'auto' : 'none'}
@@ -2275,6 +2295,21 @@ export default function CreateScreen() {
                         <ThemedText style={[styles.labIntensityControlText, { color: tintTextColor }]}>+</ThemedText>
                       </Pressable>
                     ) : null}
+                    {isActive && (
+                      <Slider
+                        style={{ width: '100%', height: 30, marginTop: 4 }}
+                        minimumValue={0}
+                        maximumValue={100}
+                        step={1}
+                        value={intensity}
+                        onValueChange={(val) => {
+                          updateProOperationIntensity(op, val);
+                        }}
+                        minimumTrackTintColor={tintTextColor}
+                        maximumTrackTintColor={colorScheme === 'dark' ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.45)'}
+                        thumbTintColor={tintTextColor}
+                      />
+                    )}
                   </Pressable>
                 );
               })}
@@ -2322,7 +2357,6 @@ export default function CreateScreen() {
                           }
                         }}
                         style={styles.makeupLayerDeleteBtn}>
-                        <Ionicons name="close-circle" size={20} color={colors.tint} />
                       </Pressable>
                     </View>
                   );
@@ -2335,7 +2369,7 @@ export default function CreateScreen() {
               </>
             )}
 
-            {activeTab === 'makeup' && (
+            {activeTab === 'accessory' && (
               <>
             {/* Section 5: Accessories */}
             <View style={styles.sectionDivider} />
@@ -2489,11 +2523,15 @@ export default function CreateScreen() {
             />
 
             {accessoryError ? <Text style={styles.errorText}>{accessoryError}</Text> : null}
+              </>
+            )}
 
-            {/* Section 6: Hair Color */}
-            <View style={[styles.sectionHeader, { marginTop: 4 }]}>
+            {activeTab === 'makeup' && (
+              <>
+            {/* Section 5: Hair Color */}
+            <View style={[styles.sectionHeader, { marginTop: 0 }]}>
               <View style={[styles.stepBadge, { backgroundColor: '#7C3AED' }]}>
-                <Text style={styles.stepBadgeText}>6</Text>
+                <Text style={styles.stepBadgeText}>5</Text>
               </View>
               <ThemedText type="defaultSemiBold">Saç Rengi</ThemedText>
             </View>
@@ -2612,10 +2650,10 @@ export default function CreateScreen() {
             {/* Divider */}
             <View style={[styles.sectionDivider, { marginVertical: 16 }]} />
 
-            {/* Section 7: Manual Makeup */}
+            {/* Section 6: Manual Makeup */}
             <View style={[styles.sectionHeader, { marginTop: 0 }]}>
               <View style={[styles.stepBadge, { backgroundColor: accent }]}>
-                <Text style={styles.stepBadgeText}>7</Text>
+                <Text style={styles.stepBadgeText}>6</Text>
               </View>
               <ThemedText type="defaultSemiBold">Manual Makeup</ThemedText>
             </View>
@@ -2789,7 +2827,6 @@ export default function CreateScreen() {
                 })}
               </View>
             )}
-
               </>
             )}
 

@@ -1184,6 +1184,24 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     });
   };
 
+  const updateProOperationIntensity = (operation: ProLiveOperation, value: number) => {
+    setProOperationIntensity((values) => {
+      const nextValue = clamp(value, 0, 100);
+      if (nextValue === 0) {
+        setActiveProOperations((current) => {
+          const next = current.filter((item) => item !== operation);
+          setProLabEnabled(next.length > 0);
+          return next;
+        });
+      }
+
+      return {
+        ...values,
+        [operation]: nextValue,
+      };
+    });
+  };
+
   const toggleMakeup = () => {
     setMakeupEnabled((enabled) => {
       const nextEnabled = !enabled;
@@ -1317,16 +1335,28 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                 return (
                   <Pressable
                     key={operation}
-                    onPress={() => activateProOperation(operation)}
+                    onPress={active ? undefined : () => activateProOperation(operation)}
                     onHoverIn={() => setHoveredProOperation(operation)}
                     onHoverOut={() => setHoveredProOperation((current) => current === operation ? null : current)}
                     style={[
                       styles.operationButton,
                       {
                         backgroundColor: active ? accent : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: active ? accent : panelBorder,
+                        borderColor: active ? active ? accent : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)' : panelBorder,
+                        paddingHorizontal: active ? 12 : 34,
+                        paddingVertical: active ? 12 : 8,
+                        minHeight: 98,
                       },
                     ]}>
+                    <Pressable
+                      style={styles.liveLabLabelWrap}
+                      onPress={() => activateProOperation(operation)}>
+                      <Ionicons name={PRO_ICON[operation]} size={15} color={active ? '#fff' : accent} />
+                      <Text style={[styles.operationText, { color: active ? '#fff' : text }]}>{PRO_LABEL[operation]}</Text>
+                      {active ? (
+                        <Text style={[styles.liveLabValue, { color: '#fff' }]}>{intensity}%</Text>
+                      ) : null}
+                    </Pressable>
                     {active ? (
                       <Pressable
                         pointerEvents={hovered ? 'auto' : 'none'}
@@ -1339,13 +1369,6 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                         <Text style={styles.liveLabAdjustText}>-</Text>
                       </Pressable>
                     ) : null}
-                    <View style={styles.liveLabLabelWrap}>
-                      <Ionicons name={PRO_ICON[operation]} size={15} color={active ? '#fff' : accent} />
-                      <Text style={[styles.operationText, { color: active ? '#fff' : text }]}>{PRO_LABEL[operation]}</Text>
-                      {active ? (
-                        <Text style={[styles.liveLabValue, { color: '#fff' }]}>{intensity}%</Text>
-                      ) : null}
-                    </View>
                     {active ? (
                       <Pressable
                         pointerEvents={hovered ? 'auto' : 'none'}
@@ -1358,6 +1381,21 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                         <Text style={styles.liveLabAdjustText}>+</Text>
                       </Pressable>
                     ) : null}
+                    {active && (
+                      <Slider
+                        style={{ width: '100%', height: 30, marginTop: 4 }}
+                        minimumValue={0}
+                        maximumValue={100}
+                        step={1}
+                        value={intensity}
+                        onValueChange={(val) => {
+                          updateProOperationIntensity(operation, val);
+                        }}
+                        minimumTrackTintColor="#ffffff"
+                        maximumTrackTintColor={isDark ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.45)'}
+                        thumbTintColor="#ffffff"
+                      />
+                    )}
                   </Pressable>
                 );
               })}

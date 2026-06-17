@@ -402,56 +402,113 @@ class ProWarpManager:
         h, w = image_np.shape[:2]
         n = len(landmarks)
 
-        lip_all_ids = self._safe_ids(REGION_INDICES.get("lips_all", []), n)
-        if len(lip_all_ids) < 8:
+        # Basic verification of landmark count
+        if n < 468:
             return image_np.copy()
 
-        print("[DEBUG] Moving region: lip_plump — local radial remap.")
+        print("[DEBUG] Moving region: lip_plump — RBF dynamic dual lip warp (Enhanced Natural & Realistic).")
 
-        lip_pts = np.array([landmarks[i] for i in lip_all_ids], dtype=np.float32)
+        # Outer boundaries of upper and lower lips
+        upper_outer = {185, 40, 39, 37, 0, 267, 269, 270, 409}
+        lower_outer = {146, 91, 181, 84, 17, 314, 405, 321, 375}
 
-        # Lip center from inner lip landmarks.
+        # Inner boundaries of upper and lower lips plus mouth corners.
+        # Keeping these locked preserves the natural mouth line and closed seal perfectly.
+        upper_inner = {191, 80, 81, 82, 13, 312, 311, 310, 415}
+        lower_inner = {324, 318, 402, 317, 14, 87, 178, 88, 95}
+        corner_ids = {61, 291, 78, 308}
+
+        lip_all_ids = self._safe_ids(list(upper_outer) + list(lower_outer) + list(upper_inner) + list(lower_inner) + list(corner_ids), n)
+        
+        # Center of lips is computed from the inner lip line
         center_ids = [i for i in [13, 14, 0, 17] if i < n]
         center = np.mean([landmarks[i] for i in center_ids], axis=0)
         cx, cy = float(center[0]), float(center[1])
 
-        # Robust lip radius: 90th-percentile distance of all lip pts from center,
-        # widened slightly so the plumping reaches the full lip body (not just
-        # the very center) while still falling to zero before the skin around it.
-        dists = np.linalg.norm(lip_pts - np.array([[cx, cy]]), axis=1)
-        lip_radius = float(np.percentile(dists, 90)) * 1.15
+        src_list = []
+        dst_list = []
 
-        # Backward remap: each output pixel samples from a position pulled toward
-        # the lip center. Pixels near the center shift the most; the pull field
-        # reaches exactly zero at r == lip_radius so the remap is seamless at the
-        # lip boundary and cannot affect anything outside.
-        grid_x, grid_y = np.meshgrid(
-            np.arange(w, dtype=np.float32),
-            np.arange(h, dtype=np.float32),
+        # We will dynamically generate zero-displacement outer boundary anchors to confine
+        # the warp precisely to the lips, preventing any stretching of the philtrum or chin.
+        dynamic_anchors = []
+
+        # Subtle, natural scaling factor: moves landmarks vertically by at most 22% of the lip height.
+        # This keeps the plumping extremely realistic and fully prevents distorted fish-face puckering.
+        factor = 0.22
+
+        for lm_id in lip_all_ids:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+
+                # Corner landmarks and inner mouth contact lines are pinned to 0 displacement
+                if lm_id in corner_ids or lm_id in upper_inner or lm_id in lower_inner:
+                    dst_list.append((sx, sy))
+                    continue
+
+                vx, vy = sx - cx, sy - cy
+
+                # Vertical height-proportional displacement: scales displacement directly with the 
+                # local thickness of the lip. Naturally tapers to 0 at the mouth corners.
+                dy = (sy - cy) * factor * intensity
+
+                dst_list.append((sx, sy + dy))
+
+                # Generate a dynamic outer anchor point further away from the mouth center (e.g. 1.90x distance)
+                # to create a very soft, smooth transition zone on the surrounding skin.
+                ax = cx + 1.90 * vx
+                ay = cy + 1.90 * vy
+                dynamic_anchors.append((ax, ay))
+
+        # Add the dynamic outer anchors with zero displacement
+        for ax, ay in dynamic_anchors:
+            src_list.append((ax, ay))
+            dst_list.append((ax, ay))
+
+        # Standard face-wide anchors to stabilize general face structure
+        anchor_ids = self._safe_ids(
+            # Nose bridge & tip
+            [168, 6, 197, 195, 1, 2, 94] +
+            # Inner/Lower eyes
+            [33, 133, 362, 263] +
+            # Jawline / chin to keep jaw shape stable
+            [172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365, 397] +
+            # Ear side anchors
+            REGION_INDICES["ear_side_anchors"],
+            n
         )
-        dx = grid_x - cx
-        dy = grid_y - cy
-        r  = np.sqrt(dx * dx + dy * dy) + 1e-6
 
-        # (1 - r/R)^2 falloff: smooth, zero at R, no discontinuity. The 0.9 gain
-        # (was 0.28, which was barely visible) gives a clearly fuller lip while
-        # the falloff keeps the warp seamless at the lip boundary.
-        radial_weight = np.clip(1.0 - r / lip_radius, 0.0, 1.0) ** 2
-        pull = float(intensity) * 0.9 * radial_weight
+        lip_set = set(lip_all_ids)
+        anchor_ids = list(set(anchor_ids) - lip_set)
 
-        map_x = np.clip(grid_x - dx * pull, 0, w - 1)
-        map_y = np.clip(grid_y - dy * pull, 0, h - 1)
+        for lm_id in anchor_ids:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx, sy))
 
-        warped = cv2.remap(image_np, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
-        print("[WARP] Lip plumping applied — radial remap")
+        src_arr = np.array(src_list, dtype=np.float32)
+        dst_arr = np.array(dst_list, dtype=np.float32)
+        face_points = self._face_points(landmarks)
 
-        # Blend strictly inside the lip hull. The remap field is already zero at
-        # the hull boundary so the composite is seamless even without heavy blur.
-        zone = _polygon_mask([(int(p[0]), int(p[1])) for p in lip_pts], h, w, blur=11, dilate_iter=1)
+        # Apply smooth thin-plate spline global warp
+        warped = self._rbf_warp(image_np, src_arr, dst_arr, face_points, smooth=smooth)
+
+        # Construct a blend zone mask covering the lips and their dynamic bounds with a soft blur
+        lip_pts = np.array([landmarks[i] for i in lip_all_ids], dtype=np.float32)
+        zone = _polygon_mask([(int(p[0]), int(p[1])) for p in lip_pts], h, w, blur=25, dilate_iter=3)
         zone3 = np.stack([zone, zone, zone], axis=2)
-        alpha = float(np.clip(0.60 + intensity * 0.35, 0.0, 1.0))
-        blended = image_np.astype(np.float32) * (1.0 - alpha * zone3) + warped.astype(np.float32) * (alpha * zone3)
-        return np.clip(blended, 0, 255).astype(np.uint8)
+
+        # Composite the warped lips onto the original image
+        out_f = image_np.astype(np.float32) * (1.0 - zone3) + warped.astype(np.float32) * zone3
+
+        # Preserve high-frequency skin textures in the morphed area to prevent blurriness
+        base = cv2.GaussianBlur(image_np.astype(np.float32), (0, 0), sigmaX=1.0, sigmaY=1.0)
+        detail = image_np.astype(np.float32) - base
+        gain = float(np.clip(0.10 + 0.03 * intensity, 0.06, 0.16))
+        out_f = np.clip(out_f + gain * detail, 0, 255)
+
+        return out_f.astype(np.uint8)
 
     def slim_face(self, image_np: np.ndarray, landmarks: list[tuple[int, int]], intensity: float = 0.6, smooth: float = 3.0) -> np.ndarray:
         h, w = image_np.shape[:2]
@@ -550,86 +607,121 @@ class ProWarpManager:
         scale = float(min(h, w))
         intensity_eff = float(np.clip(intensity, 0.0, 1.0))
 
-        # We define coordinate shifts for key control points to simulate a natural smile.
-        # {landmark_id: (dx_fraction, dy_fraction)}
-        # dx_fraction moves right (positive) or left (negative)
-        # dy_fraction moves down (positive) or up (negative)
-        # Scale determines the maximum shift at intensity = 1.0.
-        smile_shifts = {
-            # --- Outer Mouth Corners ---
-            61:  (-0.032, -0.024),  # Left corner (out and up)
-            291: (0.032, -0.024),   # Right corner (out and up)
-            
-            # --- Inner Mouth Corners ---
-            78:  (-0.028, -0.020),  # Left inner corner
-            308: (0.028, -0.020),   # Right inner corner
+        # Muscular smile shifts:
+        # We define shifts for corners, adjacent lip regions, lip centers, cheeks, and eyelids
+        # to simulate a natural coordinated zygomaticus muscle contraction.
+        
+        # 1. Corners (move up and slightly out)
+        left_corners = [61, 78]
+        right_corners = [291, 308]
+        
+        # 2. Adjacent Lip regions (move up and slightly out at 60% of corner scale)
+        left_adjacent = [185, 40, 191, 80, 146, 91, 95, 88]
+        right_adjacent = [409, 270, 415, 310, 375, 321, 324, 318]
+        
+        # 3. Upper Lip Center (very small lift to prevent compression)
+        upper_center = [0, 37, 267, 13, 81, 82, 311, 312]
+        
+        # 4. Lower Lip Center (very small lift to follow upper lip)
+        lower_center = [17, 84, 314, 14, 87, 178, 317, 402]
+        
+        # 5. Cheeks (lifted up and outward)
+        left_cheeks = [205, 50, 187]
+        right_cheeks = [425, 280, 411]
+        
+        # 6. Lower eyelids (Duchenne squint)
+        left_eyelids = [145, 153, 154]
+        right_eyelids = [374, 380, 381]
 
-            # --- Lower Lip Sides (near corners) ---
-            91:  (-0.016, -0.012),  # Lower left outer side
-            321: (0.016, -0.012),   # Lower right outer side
-            146: (-0.016, -0.012),  # Lower left inner side
-            375: (0.016, -0.012),   # Lower right inner side
-
-            # --- Upper Lip Sides (near corners) ---
-            185: (-0.016, -0.012),  # Upper left outer side
-            409: (0.016, -0.012),   # Upper right outer side
-            191: (-0.016, -0.012),  # Upper left inner side
-            415: (0.016, -0.012),   # Upper right inner side
-
-            # --- Upper Lip Center (mild lift to prevent compression) ---
-            0:   (0.0, -0.005),     # Upper lip center outer
-            13:  (0.0, -0.005),     # Upper lip center inner
-            37:  (0.0, -0.005),     # Cupid's bow peak left
-            267: (0.0, -0.005),     # Cupid's bow peak right
-
-            # --- Lower Lip Center (lifted/pressed up against teeth) ---
-            17:  (0.0, -0.003),     # Lower lip center outer
-            14:  (0.0, -0.003),     # Lower lip center inner
-            84:  (0.0, -0.004),     # Lower lip center left
-            314: (0.0, -0.004),     # Lower lip center right
-
-            # --- Cheeks (lifted up and outward) ---
-            205: (-0.010, -0.014),  # Left cheek lower
-            425: (0.010, -0.014),   # Right cheek lower
-            50:  (-0.008, -0.010),  # Left cheek upper
-            280: (0.008, -0.010),   # Right cheek upper
-            187: (-0.008, -0.010),  # Left cheek outer
-            411: (0.008, -0.010),   # Right cheek outer
-
-            # --- Lower Eyelids (subtle Duchenne squint lift) ---
-            145: (0.0, -0.004),     # Left lower eyelid center
-            374: (0.0, -0.004),     # Right lower eyelid center
-            153: (0.0, -0.003),     # Left lower eyelid side
-            154: (0.0, -0.003),     # Left lower eyelid side
-            380: (0.0, -0.003),     # Right lower eyelid side
-            381: (0.0, -0.003),     # Right lower eyelid side
-        }
-
-        # Build list of active source and destination control points
+        # Shift fractions
+        dx_corner = 0.010
+        dy_corner = -0.018
+        
         src_list = []
         dst_list = []
-        for lm_id, (dx, dy) in smile_shifts.items():
+
+        # Left corners
+        for lm_id in left_corners:
             if lm_id < n:
                 sx, sy = landmarks[lm_id]
                 src_list.append((sx, sy))
-                dst_list.append((sx + scale * dx * intensity_eff, sy + scale * dy * intensity_eff))
+                dst_list.append((sx - scale * dx_corner * intensity_eff, sy + scale * dy_corner * intensity_eff))
 
-        # Anchor points to ensure stable nose, forehead, jaw, ears, and upper eyelids
+        # Right corners
+        for lm_id in right_corners:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx + scale * dx_corner * intensity_eff, sy + scale * dy_corner * intensity_eff))
+
+        # Left adjacent
+        for lm_id in left_adjacent:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx - scale * dx_corner * 0.6 * intensity_eff, sy + scale * dy_corner * 0.6 * intensity_eff))
+
+        # Right adjacent
+        for lm_id in right_adjacent:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx + scale * dx_corner * 0.6 * intensity_eff, sy + scale * dy_corner * 0.6 * intensity_eff))
+
+        # Upper center (very small lift)
+        for lm_id in upper_center:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx, sy - scale * 0.004 * intensity_eff))
+
+        # Lower center (very small lift)
+        for lm_id in lower_center:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx, sy - scale * 0.002 * intensity_eff))
+
+        # Left cheeks
+        for lm_id in left_cheeks:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx - scale * 0.004 * intensity_eff, sy - scale * 0.007 * intensity_eff))
+
+        # Right cheeks
+        for lm_id in right_cheeks:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx + scale * 0.004 * intensity_eff, sy - scale * 0.007 * intensity_eff))
+
+        # Left eyelids
+        for lm_id in left_eyelids:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx, sy - scale * 0.002 * intensity_eff))
+
+        # Right eyelids
+        for lm_id in right_eyelids:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx, sy - scale * 0.002 * intensity_eff))
+
+        # Anchor points to ensure stable nose, forehead, jaw, ears, and eyelids
         anchor_ids = self._safe_ids(
-            # Forehead
             REGION_INDICES["forehead_anchors"] +
-            # Nose bridge & stable nose points
             [168, 6, 197, 195, 1, 2, 94] +
-            # Upper eyelids (to keep upper eye shape completely stable)
             [159, 160, 161, 158, 157, 386, 385, 384, 387, 388] +
-            # Outer jawline
             REGION_INDICES["jawline_outer"] +
-            # Ear/Side anchors
             REGION_INDICES["ear_side_anchors"],
             n
         )
-        # Deduplicate anchor IDs that might already be in smile_shifts
-        moving_set = set(smile_shifts.keys())
+        
+        # Deduplicate anchor IDs
+        moving_set = set(left_corners + right_corners + left_adjacent + right_adjacent + upper_center + lower_center + left_cheeks + right_cheeks + left_eyelids + right_eyelids)
         anchor_ids = list(set(anchor_ids) - moving_set)
 
         for lm_id in anchor_ids:
@@ -645,11 +737,11 @@ class ProWarpManager:
         dst_arr = np.array(dst_list, dtype=np.float32)
         face_points = self._face_points(landmarks)
 
-        # Apply smooth thin-plate spline global warp
-        warped = self._rbf_warp(image_np, src_arr, dst_arr, face_points, smooth=smooth)
+        # Higher smoothing (min 3.6) makes the RBF transition very global and natural
+        warped = self._rbf_warp(image_np, src_arr, dst_arr, face_points, smooth=max(smooth, 3.6))
 
         # Create a soft blend zone mask for the lower face (lips, cheeks, lower nose, lower eyes)
-        # so that background, hair, ears, and forehead remain 100% original and clean.
+        # with high blur (35px) for an extremely soft, natural falloff on the surrounding skin.
         zone_ids = self._safe_ids(
             REGION_INDICES["lips_all"] +
             REGION_INDICES["nasolabial"] +
@@ -658,7 +750,7 @@ class ProWarpManager:
             n
         )
         zone_pts = [landmarks[i] for i in zone_ids]
-        zone = _polygon_mask(zone_pts, h, w, blur=31, dilate_iter=2)
+        zone = _polygon_mask(zone_pts, h, w, blur=35, dilate_iter=2)
         zone3 = np.stack([zone, zone, zone], axis=2)
 
         # Composite the warped smile region back onto the original image
@@ -667,7 +759,6 @@ class ProWarpManager:
         # Recover fine high-frequency skin textures in the morphed area to prevent blurriness
         base = cv2.GaussianBlur(image_np.astype(np.float32), (0, 0), sigmaX=1.0, sigmaY=1.0)
         detail = image_np.astype(np.float32) - base
-        # Gain is scaled slightly with intensity
         gain = float(np.clip(0.12 + 0.05 * intensity_eff, 0.08, 0.22))
         out_f = np.clip(out_f + gain * detail, 0, 255)
 

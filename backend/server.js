@@ -5,6 +5,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const db = require('./db');
+const pool = db.pool;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
