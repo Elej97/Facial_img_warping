@@ -382,6 +382,26 @@ export async function aiGuidedAgingFromBase64(
   return requestJson('/api/aging/ai', formData);
 }
 
+export async function agingSamFromBase64(
+  imageBase64: string,
+  mode: 'aging' | 'deaging',
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+    targetAge?: number;   // 0-100 arası; belirtilmezse backend otomatik seçer
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('mode', mode);
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  if (options?.targetAge !== undefined) {
+    formData.append('target_age', String(options.targetAge));
+  }
+  return requestJson('/api/aging/sam', formData);
+}
+
 export type MakeupRegion = 'lip' | 'cheek' | 'brow' | 'lash' | 'eye' | 'teeth';
 
 export async function applyMakeupFromBase64(

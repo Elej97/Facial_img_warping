@@ -35,6 +35,7 @@ import {
     estimateAgeFromBase64,
     estimateAgeFromUri,
     exportEvaluationReportFromBase64,
+    agingSamFromBase64,
     frequencyProFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
@@ -351,8 +352,8 @@ export default function CreateScreen() {
     brow_lift: LAB_DEFAULT_INTENSITY,
     lip_plump: LAB_DEFAULT_INTENSITY,
     slim_face: LAB_DEFAULT_INTENSITY,
-    aging: LAB_DEFAULT_INTENSITY,
-    deaging: LAB_DEFAULT_INTENSITY,
+    aging: 80,
+    deaging: 80,
   });
   const [hoveredProOperation, setHoveredProOperation] = useState<ProOperation | null>(null);
   const [proLoading, setProLoading] = useState(false);
@@ -1363,19 +1364,16 @@ export default function CreateScreen() {
       for (const effectiveOperation of operations) {
         const effectiveIntensity = getProIntensityValue(effectiveOperation);
         if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
-          const data = await frequencyProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, {
+          const data = await agingSamFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, {
             landmarkBackend,
-            temporalSmoothing: true,
-            emaAlpha: 0.62,
-            streamId: 'pro-ui',
           });
-          if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
+          if (!data.success) throw new Error(data.message ?? 'SAM aging failed');
           effectSourceB64 = data.result_image_b64;
-          lastMetrics = data.metrics ?? null;
-          lastSourceLabel = data.mode === 'aging' ? 'Frequency / Aging' : 'Frequency / De-Aging';
-          lastSpectrumGray = data.spectrum_gray_b64 ?? null;
-          lastSpectrumBlue = data.spectrum_blue_b64 ?? null;
-          lastSpectrumRed = data.spectrum_red_b64 ?? null;
+          lastMetrics = null;  // SAM frekans metriği döndürmez
+          lastSourceLabel = effectiveOperation === 'aging' ? 'SAM / Aging' : 'SAM / De-Aging';
+          lastSpectrumGray = null;
+          lastSpectrumBlue = null;
+          lastSpectrumRed = null;
         } else {
           const data = await warpProFromBase64(effectSourceB64, effectiveOperation, effectiveIntensity, LAB_RBF_SMOOTH, {
             landmarkBackend,
@@ -1629,13 +1627,10 @@ export default function CreateScreen() {
       for (const effectiveOperation of activeOperationsWithIntensity) {
         const effectiveIntensity = getProIntensityValue(effectiveOperation);
         if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
-          const data = await frequencyProFromBase64(workingB64, effectiveOperation, effectiveIntensity, {
+          const data = await agingSamFromBase64(workingB64, effectiveOperation, effectiveIntensity, {
             landmarkBackend,
-            temporalSmoothing: true,
-            emaAlpha: 0.62,
-            streamId: 'pro-ui',
           });
-          if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
+          if (!data.success) throw new Error(data.message ?? 'SAM aging failed');
           workingB64 = data.result_image_b64;
         } else {
           const data = await warpProFromBase64(workingB64, effectiveOperation, effectiveIntensity, LAB_RBF_SMOOTH, {
