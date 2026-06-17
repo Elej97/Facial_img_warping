@@ -271,6 +271,7 @@ app.get('/api/health', async (_req, res) => {
 app.post('/api/preprocess', (req, res) => proxyToPython('/preprocess', req, res));
 app.post('/api/estimate-age', (req, res) => proxyToPython('/estimate-age', req, res));
 app.post('/api/aging/ai', (req, res) => proxyToPython('/aging/ai', req, res));
+app.post('/api/aging/sam', (req, res) => proxyToPython('/aging/sam', req, res));
 app.post('/api/aging/compare', (req, res) => proxyToPython('/aging/compare', req, res));
 app.post('/api/landmarks', (req, res) => proxyToPython('/landmarks', req, res));
 app.post('/api/expression/transfer', (req, res) => proxyToPython('/expression/transfer', req, res));

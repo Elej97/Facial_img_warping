@@ -58,3 +58,6 @@ python_service/.venv/
 # Codex logs
 .codex-logs/
 *.log
+
+# Large model files (>100MB) — ayrı indirme gerektirir
+python_service/models/sam_ffhq_aging.pt
