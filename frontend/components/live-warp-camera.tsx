@@ -4,6 +4,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 
 import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
+import { AREngine } from './ar-engine';
 
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
@@ -664,6 +665,8 @@ type LiveWarpCameraProps = {
 export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCameraProps) {
   const videoRef = useRef<any>(null);
   const canvasRef = useRef<any>(null);
+  const arCanvasRef = useRef<any>(null);
+  const arEngineRef = useRef<AREngine | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const agingPreviewImageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<any>(null);
@@ -704,6 +707,8 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     lip: 0,
   });
   const [splitScreen, setSplitScreen] = useState(true);
+  const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false });
+  const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false });
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
   const proLabEnabledRef = useRef(proLabEnabled);
@@ -724,12 +729,25 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   useEffect(() => { showLandmarksRef.current = showLandmarks; }, [showLandmarks]);
 
   useEffect(() => {
+    accessoriesRef.current = accessories;
+    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings);
+  }, [accessories]);
+
+  useEffect(() => {
     if (!proLabEnabled || !activeProOperations.some((operation) => operation === 'aging' || operation === 'deaging')) {
       agingPreviewImageRef.current = null;
       previewInFlightRef.current = false;
       lastPreviewStartAtRef.current = 0;
     }
   }, [activeProOperations, proLabEnabled]);
+
+  const initAR = () => {
+    if (arEngineRef.current || !arCanvasRef.current) return;
+    const engine = new AREngine(arCanvasRef.current as unknown as HTMLCanvasElement);
+    const acc = accessoriesRef.current;
+    engine.setAccessories(acc.glasses, acc.hat, acc.earrings);
+    arEngineRef.current = engine;
+  };
 
   const init = async () => {
     if (landmarkerRef.current) return;
@@ -889,6 +907,17 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       } else if (lastFaceSeenAtRef.current && now - lastFaceSeenAtRef.current > 420) {
         lm = null;
         smoothedLandmarksRef.current = null;
+      }
+    }
+
+    // Update 3D accessories overlay
+    const arEngine = arEngineRef.current;
+    if (arEngine) {
+      if (lm && lm.length >= 478) {
+        const lm3d = lm.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
+        arEngine.update(lm3d, W, H, splitScreen);
+      } else if (!lastFaceSeenAtRef.current || now - lastFaceSeenAtRef.current > 420) {
+        arEngine.clear();
       }
     }
 
@@ -1068,6 +1097,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const start = async () => {
     try {
       await init();
+      initAR();
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 960 }, height: { ideal: 720 }, facingMode: 'user' },
         audio: false,
@@ -1103,6 +1133,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     setRunning(false);
     setMessage('Durduruldu');
     setFps(0);
+    arEngineRef.current?.clear();
   };
 
   const capture = () => {
@@ -1211,6 +1242,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach((t: any) => t.stop());
+      arEngineRef.current?.dispose();
     };
   }, []);
 
@@ -1238,6 +1270,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
           <video ref={videoRef} style={{ display: 'none' }} muted playsInline />
           {/* @ts-ignore */}
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+
+          {/* Three.js AR accessories — transparent overlay, pointer events disabled */}
+          <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+            {/* @ts-ignore */}
+            <canvas ref={arCanvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+          </View>
 
           <View style={styles.stageOverlay} pointerEvents="box-none">
             <View style={styles.topPills}>
@@ -1304,6 +1342,34 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                 <Ionicons name="refresh-outline" size={14} color={text} />
                 <Text style={[styles.smallBtnText, { color: text }]}>Sıfırla</Text>
               </Pressable>
+            </View>
+
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionLabel, { color: muted }]}>AKSESUAR 3D</Text>
+            </View>
+            <View style={styles.accessoryRow}>
+              {([
+                { key: 'glasses', label: 'Gözlük', icon: '👓' },
+                { key: 'hat',     label: 'Şapka',  icon: '🎩' },
+                { key: 'earrings',label: 'Küpe',   icon: '💎' },
+              ] as const).map(({ key, label, icon }) => (
+                <Pressable
+                  key={key}
+                  onPress={() => setAccessories(prev => ({ ...prev, [key]: !prev[key] }))}
+                  style={[
+                    styles.accessoryButton,
+                    {
+                      backgroundColor: accessories[key]
+                        ? 'rgba(160,32,240,0.30)'
+                        : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      borderColor: accessories[key] ? accent : panelBorder,
+                    },
+                  ]}
+                >
+                  <Text style={styles.accessoryIcon}>{icon}</Text>
+                  <Text style={[styles.accessoryLabel, { color: accessories[key] ? '#fff' : text }]}>{label}</Text>
+                </Pressable>
+              ))}
             </View>
 
             <View style={styles.sectionRow}>
@@ -1877,5 +1943,24 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 14,
     marginTop: 4,
+  },
+  accessoryRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  accessoryButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    gap: 3,
+  },
+  accessoryIcon: {
+    fontSize: 20,
+  },
+  accessoryLabel: {
+    fontSize: 10,
+    fontWeight: '800',
   },
 });
