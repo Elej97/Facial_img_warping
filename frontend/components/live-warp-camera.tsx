@@ -4,7 +4,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 
 import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
-import { AREngine } from './ar-engine';
+import { AREngine, GlassesStyle } from './ar-engine';
 
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
@@ -709,6 +709,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const [splitScreen, setSplitScreen] = useState(true);
   const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false });
   const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false });
+  const [glassesStyle, setGlassesStyle] = useState<GlassesStyle>('classic');
+
+  const changeGlassesStyle = (style: GlassesStyle) => {
+    setGlassesStyle(style);
+    arEngineRef.current?.setGlassesStyle(style);
+  };
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
   const proLabEnabledRef = useRef(proLabEnabled);
@@ -1371,6 +1377,36 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                 </Pressable>
               ))}
             </View>
+
+            {accessories.glasses && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
+                {([
+                  { key: 'classic', label: 'Klasik', color: '#111122' },
+                  { key: 'round',   label: 'Altın',  color: '#d4a030' },
+                  { key: 'aviator', label: 'Aviator', color: '#b0b8c8' },
+                  { key: 'square',  label: 'Kare',    color: '#1a2233' },
+                ] as { key: GlassesStyle; label: string; color: string }[]).map(({ key, label, color }) => (
+                  <Pressable
+                    key={key}
+                    onPress={() => changeGlassesStyle(key)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                      borderRadius: 10,
+                      backgroundColor: glassesStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      borderWidth: 1.5,
+                      borderColor: glassesStyle === key ? accent : panelBorder,
+                    }}
+                  >
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} />
+                    <Text style={{ color: glassesStyle === key ? '#fff' : text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
 
             <View style={styles.sectionRow}>
               <Text style={[styles.sectionLabel, { color: muted }]}>LAB</Text>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { AREngine } from './ar-engine';
+import { AREngine, GlassesStyle } from './ar-engine';
 
 type LandmarkPoint = { x: number; y: number; z?: number };
 
@@ -53,6 +53,13 @@ export default function WebRealtimeFace() {
     earrings: false,
   });
   const accessoriesRef = useRef<AccessoryState>({ glasses: false, hat: false, earrings: false });
+
+  const [glassesStyle, setGlassesStyleState] = useState<GlassesStyle>('classic');
+
+  const changeGlassesStyle = (style: GlassesStyle) => {
+    setGlassesStyleState(style);
+    arEngineRef.current?.setGlassesStyle(style);
+  };
 
   // Keep ref in sync and update the AR engine
   useEffect(() => {
@@ -306,6 +313,27 @@ export default function WebRealtimeFace() {
         </Pressable>
       </View>
 
+      {/* Glasses style picker — visible only when glasses is active */}
+      {accessories.glasses && (
+        <View style={styles.styleRow}>
+          {([
+            { key: 'classic', label: 'Klasik', color: '#111122' },
+            { key: 'round',   label: 'Altın',  color: '#d4a030' },
+            { key: 'aviator', label: 'Aviator', color: '#b0b8c8' },
+            { key: 'square',  label: 'Kare',    color: '#1a2233' },
+          ] as { key: GlassesStyle; label: string; color: string }[]).map(({ key, label, color }) => (
+            <Pressable
+              key={key}
+              onPress={() => changeGlassesStyle(key)}
+              style={[styles.styleButton, glassesStyle === key && styles.styleButtonActive]}
+            >
+              <View style={[styles.styleColorDot, { backgroundColor: color }]} />
+              <Text style={styles.styleLabel}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
       {/* Camera + debug controls */}
       <View style={styles.actions}>
         <Pressable onPress={running ? stop : start} style={styles.button}>
@@ -379,6 +407,37 @@ const styles = StyleSheet.create({
   accessoryRow: {
     flexDirection: 'row',
     gap: 12,
+  },
+  styleRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  styleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  styleButtonActive: {
+    backgroundColor: 'rgba(160,32,240,0.30)',
+    borderColor: '#a020f0',
+  },
+  styleColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  styleLabel: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   accButton: {
     width: 88,

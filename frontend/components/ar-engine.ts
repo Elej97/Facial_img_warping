@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 type Landmark = { x: number; y: number; z: number };
 
+export type GlassesStyle = 'classic' | 'round' | 'aviator' | 'square';
+
 // MediaPipe face oval landmark indices (ordered, forms a closed polygon)
 const FACE_OVAL = [
   10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
@@ -87,19 +89,117 @@ function buildGlasses(): THREE.Group {
   bridgeMesh.position.set(0, 0.03, 0.01);
   g.add(bridgeMesh);
 
-  // Temple arms
+  // Temple arms — angled outward and backward toward ears
   const tLen = 1.15;
   for (const side of [-1, 1] as const) {
     const temple = new THREE.Mesh(
       new THREE.CylinderGeometry(TR * 0.65, TR * 0.65, tLen, 8),
       frameMat,
     );
-    temple.rotation.z = Math.PI / 2;
-    // Slight backward angle — arm goes back and a touch behind the face plane
-    temple.position.set(side * (CX + HR + tLen / 2 - 0.02), 0.015, -0.07);
+    const dir = new THREE.Vector3(side, -0.05, -0.28).normalize();
+    temple.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    temple.position.set(side * (CX + HR - 0.02), 0.015, 0).addScaledVector(dir, tLen / 2);
+    temple.userData.side = side;
     g.add(temple);
   }
 
+  return g;
+}
+
+function buildRoundGlasses(): THREE.Group {
+  const g = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0xd4a030, metalness: 0.95, roughness: 0.1 });
+  const lensMat = new THREE.MeshStandardMaterial({ color: 0x88ccbb, transparent: true, opacity: 0.22, roughness: 0 });
+  const R = 0.27; const TR = 0.013; const CX = 0.46;
+  for (const side of [-1, 1] as const) {
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(R, TR, 8, 48), frameMat);
+    frame.position.set(side * CX, 0, 0);
+    g.add(frame);
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(R - TR, 48), lensMat);
+    lens.position.set(side * CX, 0, 0.002);
+    g.add(lens);
+  }
+  const bridgeLen = 2 * CX - 2 * R + 0.06;
+  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(TR * 0.7, TR * 0.7, bridgeLen, 8), frameMat);
+  bridge.rotation.z = Math.PI / 2;
+  bridge.position.set(0, 0.05, 0.01);
+  g.add(bridge);
+  for (const side of [-1, 1] as const) {
+    const temple = new THREE.Mesh(new THREE.CylinderGeometry(TR * 0.6, TR * 0.6, 1.1, 8), frameMat);
+    const dir = new THREE.Vector3(side, -0.04, -0.28).normalize();
+    temple.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    temple.position.set(side * (CX + R - 0.01), 0.01, 0).addScaledVector(dir, 1.1 / 2);
+    temple.userData.side = side;
+    g.add(temple);
+  }
+  return g;
+}
+
+function buildAviatorGlasses(): THREE.Group {
+  const g = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0xb0b8c8, metalness: 0.95, roughness: 0.08 });
+  const lensMat = new THREE.MeshStandardMaterial({ color: 0x667788, transparent: true, opacity: 0.40, roughness: 0 });
+  const HR = 0.27; const VR = 0.34; const TR = 0.013; const CX = 0.50;
+  for (const side of [-1, 1] as const) {
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(HR, TR, 8, 48), frameMat);
+    frame.scale.y = VR / HR;
+    frame.position.set(side * CX, -0.04, 0);
+    g.add(frame);
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(HR - TR, 48), lensMat);
+    lens.scale.y = VR / HR;
+    lens.position.set(side * CX, -0.04, 0.002);
+    g.add(lens);
+  }
+  const bridgeLen = 2 * CX - 2 * HR + 0.04;
+  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(TR * 0.6, TR * 0.6, bridgeLen, 8), frameMat);
+  bridge.rotation.z = Math.PI / 2;
+  bridge.position.set(0, 0.05, 0.01);
+  g.add(bridge);
+  for (const side of [-1, 1] as const) {
+    const temple = new THREE.Mesh(new THREE.CylinderGeometry(TR * 0.55, TR * 0.55, 1.1, 8), frameMat);
+    const dir = new THREE.Vector3(side, -0.04, -0.28).normalize();
+    temple.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    temple.position.set(side * (CX + HR - 0.01), -0.02, 0).addScaledVector(dir, 1.1 / 2);
+    temple.userData.side = side;
+    g.add(temple);
+  }
+  return g;
+}
+
+function buildSquareGlasses(): THREE.Group {
+  const g = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x1a2233, metalness: 0.6, roughness: 0.35 });
+  const lensMat = new THREE.MeshStandardMaterial({ color: 0x334455, transparent: true, opacity: 0.28, roughness: 0 });
+  const W = 0.30; const H = 0.21; const TR = 0.016; const CX = 0.48;
+  for (const side of [-1, 1] as const) {
+    const lens = new THREE.Mesh(new THREE.PlaneGeometry(W * 2, H * 2), lensMat);
+    lens.position.set(side * CX, 0, 0.001);
+    g.add(lens);
+    for (const [cy, isH] of [[H, true], [-H, true]] as [number, boolean][]) {
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(TR, TR, W * 2 + TR * 2, 8), frameMat);
+      bar.rotation.z = Math.PI / 2;
+      bar.position.set(side * CX, cy, 0.002);
+      g.add(bar);
+    }
+    for (const cx of [-W, W]) {
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(TR, TR, H * 2, 8), frameMat);
+      bar.position.set(side * CX + cx, 0, 0.002);
+      g.add(bar);
+    }
+  }
+  const bridgeLen = Math.max(0.01, 2 * CX - 2 * W - TR * 2);
+  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(TR * 0.75, TR * 0.75, bridgeLen, 8), frameMat);
+  bridge.rotation.z = Math.PI / 2;
+  bridge.position.set(0, H * 0.3, 0.002);
+  g.add(bridge);
+  for (const side of [-1, 1] as const) {
+    const temple = new THREE.Mesh(new THREE.CylinderGeometry(TR * 0.65, TR * 0.65, 1.1, 8), frameMat);
+    const dir = new THREE.Vector3(side, -0.04, -0.28).normalize();
+    temple.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    temple.position.set(side * (CX + W), H * 0.1, 0).addScaledVector(dir, 1.1 / 2);
+    temple.userData.side = side;
+    g.add(temple);
+  }
   return g;
 }
 
@@ -169,7 +269,9 @@ export class AREngine {
   private scene: THREE.Scene;
   private camera: THREE.OrthographicCamera;
 
-  private glasses: THREE.Group;
+  private glassesMap: Record<GlassesStyle, THREE.Group>;
+  private activeGlasses: THREE.Group;
+  private glassesEnabled = false;
   private hat: THREE.Group;
   private leftEarring: THREE.Group;
   private rightEarring: THREE.Group;
@@ -206,9 +308,17 @@ export class AREngine {
     this.occluder.visible = false;
     this.scene.add(this.occluder);
 
-    this.glasses = buildGlasses();
-    this.glasses.renderOrder = 1;
-    this.glasses.visible = false;
+    this.glassesMap = {
+      classic: buildGlasses(),
+      round: buildRoundGlasses(),
+      aviator: buildAviatorGlasses(),
+      square: buildSquareGlasses(),
+    };
+    for (const g of Object.values(this.glassesMap)) {
+      g.renderOrder = 1;
+      g.visible = false;
+    }
+    this.activeGlasses = this.glassesMap.classic;
 
     this.hat = buildHat();
     this.hat.renderOrder = 1;
@@ -222,7 +332,8 @@ export class AREngine {
     this.rightEarring.renderOrder = 1;
     this.rightEarring.visible = false;
 
-    this.scene.add(this.glasses, this.hat, this.leftEarring, this.rightEarring);
+    for (const g of Object.values(this.glassesMap)) this.scene.add(g);
+    this.scene.add(this.hat, this.leftEarring, this.rightEarring);
   }
 
   private refreshOccluder(landmarks: Landmark[], W: number, H: number): void {
@@ -275,12 +386,23 @@ export class AREngine {
     const face = faceFrame(landmarks, W, H);
     this.refreshOccluder(landmarks, W, H);
 
-    if (this.glasses.visible) {
-      this.glasses.position.copy(face.bridge);
-      // Push glasses slightly forward of the nose bridge
-      this.glasses.position.addScaledVector(face.forward, face.ipd * 0.14);
-      this.glasses.quaternion.copy(face.quat);
-      this.glasses.scale.setScalar(face.ipd);
+    if (this.activeGlasses.visible) {
+      this.activeGlasses.position.copy(face.bridge);
+      this.activeGlasses.position.addScaledVector(face.forward, face.ipd * 0.14);
+      this.activeGlasses.quaternion.copy(face.quat);
+      this.activeGlasses.scale.setScalar(face.ipd);
+
+      // Hide the temple that rotates behind the head based on face yaw.
+      // face.right.z < 0  → face turned so that side=1 temple goes behind.
+      // face.right.z > 0  → face turned so that side=-1 temple goes behind.
+      const yaw = face.right.z;
+      const YAW_THRESHOLD = 0.10;
+      this.activeGlasses.children.forEach(child => {
+        if ('side' in child.userData) {
+          const s = child.userData.side as number;
+          child.visible = !(s === 1 && yaw < -YAW_THRESHOLD) && !(s === -1 && yaw > YAW_THRESHOLD);
+        }
+      });
     }
 
     if (this.hat.visible) {
@@ -321,11 +443,18 @@ export class AREngine {
   }
 
   setAccessories(glasses: boolean, hat: boolean, earrings: boolean): void {
-    this.glasses.visible = glasses;
+    this.glassesEnabled = glasses;
+    this.activeGlasses.visible = glasses;
     this.hat.visible = hat;
     this.leftEarring.visible = earrings;
     this.rightEarring.visible = earrings;
     this.occluder.visible = glasses || hat || earrings;
+  }
+
+  setGlassesStyle(style: GlassesStyle): void {
+    this.activeGlasses.visible = false;
+    this.activeGlasses = this.glassesMap[style];
+    this.activeGlasses.visible = this.glassesEnabled;
   }
 
   dispose(): void {
