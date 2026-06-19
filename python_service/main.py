@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -8,6 +9,33 @@ from fastapi.responses import JSONResponse, Response
 
 from startup_check import warn_missing_ai_dependencies
 
+
+def _parse_allowed_origins() -> list[str]:
+    """
+    ALLOWED_ORIGINS env değişkeninden izin verilen origin listesini okur.
+
+    Örnekler (.env dosyasında):
+        ALLOWED_ORIGINS=*                                          → geliştirme
+        ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
+        ALLOWED_ORIGINS=https://facemorphapp.com,https://www.facemorphapp.com
+
+    Değişken tanımlı değilse geliştirme modunda çalışır (["*"]).
+    """
+    raw = os.environ.get("ALLOWED_ORIGINS", "").strip()
+    if not raw or raw == "*":
+        return ["*"]
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins if origins else ["*"]
+
+
+_ALLOWED_ORIGINS = _parse_allowed_origins()
+
+# insightface and DeepFace are used ONLY for age estimation (see
+# _estimate_age_from_image). They are imported eagerly at startup so the first
+# age-estimation request (e.g. live Pro Aging) does not stall while loading
+# ~2 GB of models inside the request handler. NOTE: this means the service needs
+# enough RAM to load these at boot — if startup fails under memory pressure,
+# revisit lazy loading but offload the load to a thread executor.
 try:
     from deepface import DeepFace
 except Exception:
@@ -15,13 +43,17 @@ except Exception:
 
 try:
     from insightface.app import FaceAnalysis as _InsightFaceAnalysis
-    _insight_app = _InsightFaceAnalysis(allowed_modules=["detection", "genderage"], providers=["CPUExecutionProvider"])
+    _insight_app = _InsightFaceAnalysis(
+        allowed_modules=["detection", "genderage"],
+        providers=["CPUExecutionProvider"],
+    )
     _insight_app.prepare(ctx_id=-1, det_size=(320, 320))
 except Exception:
     _insight_app = None
 
 from modules.aging import apply_aging, apply_deaging
 from modules.accessory_service import apply_accessory
+from modules.hair_segmentation import apply_hair_color
 from modules.evaluation_metrics import compute_quality_metrics
 from modules.landmark import detect_landmarks, draw_landmarks
 from modules.landmark_fusion import detect_landmarks_fused
@@ -51,11 +83,6 @@ warn_missing_ai_dependencies()
 
 
 _AGE_FALLBACK = 30
-def _estimate_age_from_image(img: np.ndarray) -> float:
-    if DeepFace is None:
-        raise RuntimeError(
-            "DeepFace is not installed. Add it to python_service/requirements.txt or use a lighter age model backend."
-        )
 def _estimate_age_from_image(img: np.ndarray) -> tuple[float, bool]:
     """Returns (estimated_age, is_estimated). Tries insightface → DeepFace → fallback."""
     if _insight_app is not None:
@@ -92,9 +119,10 @@ app = FastAPI(title="Facial CV Service")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=_ALLOWED_ORIGINS != ["*"],  # credentials sadece spesifik origin'lerde
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 
@@ -127,6 +155,7 @@ async def preprocess(image: UploadFile = File(...)):
         "success": True,
         "original_size": [orig_w, orig_h],
         "face_bbox": list(bbox),
+        "processed_size": [processed.shape[1], processed.shape[0]],
         "processed_image_b64": numpy_to_b64(processed),
         "message": "Face detected and preprocessed",
     }
@@ -208,12 +237,19 @@ async def ai_guided_aging(
 
 
 @app.post("/landmarks")
-async def landmarks(image: UploadFile = File(...)):
+async def landmarks(
+    image: UploadFile = File(...),
+    landmark_backend: str = Form("hybrid"),
+):
     try:
         file_bytes = await image.read()
         img = bytes_to_numpy(file_bytes)
 
-        lms = detect_landmarks(img)
+        lms, landmark_info = detect_landmarks_fused(
+            img,
+            backend=landmark_backend,
+            temporal_smoothing=False,
+        )
         if lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected for landmark extraction."}
 
@@ -223,6 +259,8 @@ async def landmarks(image: UploadFile = File(...)):
             "landmarks": [[x, y] for x, y in lms],
             "landmark_image_b64": numpy_to_b64(annotated),
             "landmark_count": len(lms),
+            "landmark_backend": landmark_backend,
+            "landmark_info": landmark_info,
         }
     except Exception as exc:
         return {"error": "Face not detected or model error", "details": str(exc)}
@@ -737,6 +775,50 @@ async def pro_apply_accessory(
         }
     except Exception as exc:
         return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+@app.post("/pro/hair-color")
+async def pro_hair_color(
+    image: UploadFile = File(...),
+    hex_color: str = Form(...),
+    intensity: float = Form(0.85),
+    preserve_highlights: bool = Form(True),
+):
+    """
+    Professional hair recoloring.
+
+    - hex_color: Target color in #RRGGBB format (e.g. "#A020F0").
+    - intensity: 0.0 (no change) – 1.0 (full replacement). Default 0.85.
+    - preserve_highlights: Keep specular shine areas. Default True.
+
+    Returns: { success, result_image_b64, hex_color, intensity }
+    """
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        valid, err = validate_image(file_bytes, image.filename or "upload.jpg")
+        if not valid:
+            return {"success": False, "error": err, "details": err}
+
+        img = bytes_to_numpy(file_bytes)
+
+        result_img = apply_hair_color(
+            img,
+            hex_color=hex_color,
+            intensity=intensity,
+            preserve_highlights=preserve_highlights,
+        )
+
+        return {
+            "success": True,
+            "hex_color": hex_color.lstrip("#").upper(),
+            "intensity": round(intensity, 3),
+            "result_image_b64": numpy_to_b64(result_img),
+        }
+    except ValueError as exc:
+        return {"success": False, "error": "Invalid parameter", "details": str(exc)}
+    except Exception as exc:
+        return {"success": False, "error": "Hair color failed", "details": str(exc)}
 
 
 def _parse_optional_float(value: str | None) -> float | None:

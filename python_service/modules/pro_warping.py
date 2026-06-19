@@ -122,6 +122,144 @@ def _polygon_mask(points: list[tuple[int, int]], h: int, w: int, blur: int = 31,
     return mask.astype(np.float32) / 255.0
 
 
+def _add_brow_lift_flow(
+    flow_y: np.ndarray,
+    center: tuple[int, int],
+    shift_y: float,
+    sigma_x: float,
+    sigma_y: float,
+    lower_bleed_px: float,
+) -> None:
+    h, w = flow_y.shape
+    cx, cy = float(center[0]), float(center[1])
+    sigma_x = max(1.0, float(sigma_x))
+    sigma_y = max(1.0, float(sigma_y))
+    radius_x = int(3.0 * sigma_x)
+    radius_y = int(3.0 * sigma_y)
+
+    x1 = max(0, int(cx) - radius_x)
+    y1 = max(0, int(cy) - radius_y)
+    x2 = min(w, int(cx) + radius_x + 1)
+    y2 = min(h, int(cy) + radius_y + 1)
+    if x2 <= x1 or y2 <= y1:
+        return
+
+    yy, xx = np.mgrid[y1:y2, x1:x2].astype(np.float32)
+    weight = np.exp(-(((xx - cx) ** 2) / (sigma_x * sigma_x) + ((yy - cy) ** 2) / (sigma_y * sigma_y))).astype(np.float32)
+    weight[yy > cy + lower_bleed_px] = 0.0
+    flow_y[y1:y2, x1:x2] += float(shift_y) * weight
+
+
+def _add_local_flow(
+    flow_x: np.ndarray,
+    flow_y: np.ndarray,
+    center: tuple[int, int],
+    shift: tuple[float, float],
+    sigma_x: float,
+    sigma_y: float,
+) -> None:
+    h, w = flow_x.shape
+    cx, cy = float(center[0]), float(center[1])
+    sigma_x = max(1.0, float(sigma_x))
+    sigma_y = max(1.0, float(sigma_y))
+    radius_x = int(3.0 * sigma_x)
+    radius_y = int(3.0 * sigma_y)
+
+    x1 = max(0, int(cx) - radius_x)
+    y1 = max(0, int(cy) - radius_y)
+    x2 = min(w, int(cx) + radius_x + 1)
+    y2 = min(h, int(cy) + radius_y + 1)
+    if x2 <= x1 or y2 <= y1:
+        return
+
+    yy, xx = np.mgrid[y1:y2, x1:x2].astype(np.float32)
+    weight = np.exp(-(((xx - cx) ** 2) / (sigma_x * sigma_x) + ((yy - cy) ** 2) / (sigma_y * sigma_y))).astype(np.float32)
+    flow_x[y1:y2, x1:x2] += float(shift[0]) * weight
+    flow_y[y1:y2, x1:x2] += float(shift[1]) * weight
+
+
+def _flow_warp(image_np: np.ndarray, flow_x: np.ndarray, flow_y: np.ndarray) -> np.ndarray:
+    h, w = image_np.shape[:2]
+    grid_x, grid_y = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    map_x = np.clip(grid_x - flow_x, 0, w - 1)
+    map_y = np.clip(grid_y - flow_y, 0, h - 1)
+    return cv2.remap(image_np, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+
+
+def _flow_magnitude_mask(flow_x: np.ndarray, flow_y: np.ndarray, blur: int = 17) -> np.ndarray:
+    magnitude = np.sqrt(flow_x * flow_x + flow_y * flow_y)
+    max_value = float(np.max(magnitude))
+    if max_value <= 1e-6:
+        return np.zeros_like(flow_x, dtype=np.float32)
+    mask = np.clip(magnitude / max_value, 0.0, 1.0).astype(np.float32)
+    blur = blur | 1
+    return cv2.GaussianBlur(mask, (blur, blur), 0)
+
+
+def _translate_brow_texture(
+    image_np: np.ndarray,
+    landmarks: list[tuple[int, int]],
+    brow_groups: list[list[int]],
+    eye_groups: list[list[int]],
+    intensity: float,
+) -> np.ndarray:
+    h, w = image_np.shape[:2]
+    scale = float(min(h, w))
+    intensity_eff = float(np.clip(intensity, 0.0, 1.0))
+
+    candidate_mask = np.zeros((h, w), dtype=np.uint8)
+    thickness = max(4, int(scale * 0.020))
+
+    for brow_ids in brow_groups:
+        points = np.array([landmarks[i] for i in brow_ids if i < len(landmarks)], dtype=np.int32)
+        if len(points) < 2:
+            continue
+        cv2.polylines(candidate_mask, [points], isClosed=False, color=255, thickness=thickness, lineType=cv2.LINE_AA)
+        for point in points:
+            cv2.circle(candidate_mask, tuple(point), max(2, thickness // 2), 255, -1, lineType=cv2.LINE_AA)
+
+    if int(candidate_mask.max()) == 0:
+        return image_np.copy()
+
+    for eye_ids in eye_groups:
+        eye_points = np.array([landmarks[i] for i in eye_ids if i < len(landmarks)], dtype=np.int32)
+        if len(eye_points) >= 3:
+            eye_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.fillConvexPoly(eye_mask, cv2.convexHull(eye_points), 255)
+            eye_mask = cv2.dilate(eye_mask, np.ones((5, 5), np.uint8), iterations=1)
+            candidate_mask[eye_mask > 0] = 0
+
+    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    candidate_pixels = gray[candidate_mask > 0]
+    if candidate_pixels.size == 0:
+        return image_np.copy()
+
+    threshold = max(35.0, min(165.0, float(np.percentile(candidate_pixels, 45)) - 4.0))
+    source_mask = np.zeros((h, w), dtype=np.uint8)
+    source_mask[(candidate_mask > 0) & (gray <= threshold)] = 255
+    source_mask = cv2.morphologyEx(source_mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    source_mask = cv2.dilate(source_mask, np.ones((3, 3), np.uint8), iterations=1)
+    source_mask[candidate_mask == 0] = 0
+
+    if int(source_mask.max()) == 0:
+        return image_np.copy()
+
+    shift_y = -scale * (0.018 + 0.018 * intensity_eff)
+    transform = np.float32([[1, 0, 0], [0, 1, shift_y]])
+
+    erase_mask = cv2.dilate(source_mask, np.ones((3, 3), np.uint8), iterations=1)
+    base = cv2.inpaint(image_np, erase_mask, max(1, int(scale * 0.004)), cv2.INPAINT_TELEA)
+    shifted_image = cv2.warpAffine(image_np, transform, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+    shifted_mask = cv2.warpAffine(source_mask, transform, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+
+    alpha = cv2.GaussianBlur(shifted_mask.astype(np.float32) / 255.0, (0, 0), sigmaX=max(1.0, scale * 0.004))
+    alpha = np.clip(alpha * (0.92 + 0.08 * intensity_eff), 0.0, 1.0)
+    alpha3 = np.stack([alpha, alpha, alpha], axis=2)
+
+    out = base.astype(np.float32) * (1.0 - alpha3) + shifted_image.astype(np.float32) * alpha3
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def _collect_points(landmarks: list[tuple[int, int]], indices: list[int]) -> list[tuple[int, int]]:
     return [landmarks[i] for i in indices if i < len(landmarks)]
 
@@ -277,9 +415,11 @@ class ProWarpManager:
         center = np.mean([landmarks[i] for i in center_ids], axis=0)
         cx, cy = float(center[0]), float(center[1])
 
-        # Robust lip radius: 85th-percentile distance of all lip pts from center.
+        # Robust lip radius: 90th-percentile distance of all lip pts from center,
+        # widened slightly so the plumping reaches the full lip body (not just
+        # the very center) while still falling to zero before the skin around it.
         dists = np.linalg.norm(lip_pts - np.array([[cx, cy]]), axis=1)
-        lip_radius = float(np.percentile(dists, 85))
+        lip_radius = float(np.percentile(dists, 90)) * 1.15
 
         # Backward remap: each output pixel samples from a position pulled toward
         # the lip center. Pixels near the center shift the most; the pull field
@@ -293,9 +433,11 @@ class ProWarpManager:
         dy = grid_y - cy
         r  = np.sqrt(dx * dx + dy * dy) + 1e-6
 
-        # (1 - r/R)^2 falloff: smooth, zero at R, no discontinuity.
+        # (1 - r/R)^2 falloff: smooth, zero at R, no discontinuity. The 0.9 gain
+        # (was 0.28, which was barely visible) gives a clearly fuller lip while
+        # the falloff keeps the warp seamless at the lip boundary.
         radial_weight = np.clip(1.0 - r / lip_radius, 0.0, 1.0) ** 2
-        pull = float(intensity) * 0.28 * radial_weight
+        pull = float(intensity) * 0.9 * radial_weight
 
         map_x = np.clip(grid_x - dx * pull, 0, w - 1)
         map_y = np.clip(grid_y - dy * pull, 0, h - 1)
@@ -400,56 +542,136 @@ class ProWarpManager:
         intensity: float = 0.6,
         smooth: float = 2.7,
     ) -> np.ndarray:
+        h, w = image_np.shape[:2]
         n = len(landmarks)
-        lips_outer = self._safe_ids(REGION_INDICES["lips_outer"], n)
-        cheeks = self._safe_ids(REGION_INDICES["cheeks_outer"], n)
-        eye_lower = self._safe_ids(REGION_INDICES["eye_lower"], n)
-        jaw = self._safe_ids(REGION_INDICES["jawline_outer"], n)
-
-        if len(lips_outer) < 6:
+        if n < 468:
             return image_np.copy()
 
-        src_ids = lips_outer + cheeks + eye_lower
-        src = np.array([landmarks[i] for i in src_ids], dtype=np.float32)
-        dst = src.copy()
+        scale = float(min(h, w))
+        intensity_eff = float(np.clip(intensity, 0.0, 1.0))
 
-        lip_center = np.mean(np.array([landmarks[i] for i in lips_outer], dtype=np.float32), axis=0)
-        scale = float(min(image_np.shape[:2]))
+        # We define coordinate shifts for key control points to simulate a natural smile.
+        # {landmark_id: (dx_fraction, dy_fraction)}
+        # dx_fraction moves right (positive) or left (negative)
+        # dy_fraction moves down (positive) or up (negative)
+        # Scale determines the maximum shift at intensity = 1.0.
+        smile_shifts = {
+            # --- Outer Mouth Corners ---
+            61:  (-0.032, -0.024),  # Left corner (out and up)
+            291: (0.032, -0.024),   # Right corner (out and up)
+            
+            # --- Inner Mouth Corners ---
+            78:  (-0.028, -0.020),  # Left inner corner
+            308: (0.028, -0.020),   # Right inner corner
 
-        # Mouth corners up (main smile cue), with slight outward pull.
-        corner_candidates = [61, 291]
-        corner_offsets: dict[int, tuple[float, float]] = {}
-        for cid in corner_candidates:
-            if cid >= n:
-                continue
-            x, _ = landmarks[cid]
-            outward = -1.0 if x < lip_center[0] else 1.0
-            corner_offsets[cid] = (outward * scale * 0.014 * intensity, -scale * 0.022 * intensity)
+            # --- Lower Lip Sides (near corners) ---
+            91:  (-0.016, -0.012),  # Lower left outer side
+            321: (0.016, -0.012),   # Lower right outer side
+            146: (-0.016, -0.012),  # Lower left inner side
+            375: (0.016, -0.012),   # Lower right inner side
 
-        for i, lm_id in enumerate(src_ids):
-            x, y = dst[i]
-            dx = 0.0
-            dy = 0.0
+            # --- Upper Lip Sides (near corners) ---
+            185: (-0.016, -0.012),  # Upper left outer side
+            409: (0.016, -0.012),   # Upper right outer side
+            191: (-0.016, -0.012),  # Upper left inner side
+            415: (0.016, -0.012),   # Upper right inner side
 
-            if lm_id in corner_offsets:
-                cdx, cdy = corner_offsets[lm_id]
-                dx += cdx
-                dy += cdy
+            # --- Upper Lip Center (mild lift to prevent compression) ---
+            0:   (0.0, -0.005),     # Upper lip center outer
+            13:  (0.0, -0.005),     # Upper lip center inner
+            37:  (0.0, -0.005),     # Cupid's bow peak left
+            267: (0.0, -0.005),     # Cupid's bow peak right
 
-            if lm_id in cheeks:
-                outward = -1.0 if x < lip_center[0] else 1.0
-                dx += outward * scale * 0.006 * intensity
-                dy += -scale * 0.010 * intensity
+            # --- Lower Lip Center (lifted/pressed up against teeth) ---
+            17:  (0.0, -0.003),     # Lower lip center outer
+            14:  (0.0, -0.003),     # Lower lip center inner
+            84:  (0.0, -0.004),     # Lower lip center left
+            314: (0.0, -0.004),     # Lower lip center right
 
-            if lm_id in eye_lower:
-                dy += -scale * 0.0038 * intensity
+            # --- Cheeks (lifted up and outward) ---
+            205: (-0.010, -0.014),  # Left cheek lower
+            425: (0.010, -0.014),   # Right cheek lower
+            50:  (-0.008, -0.010),  # Left cheek upper
+            280: (0.008, -0.010),   # Right cheek upper
+            187: (-0.008, -0.010),  # Left cheek outer
+            411: (0.008, -0.010),   # Right cheek outer
 
-            dst[i, 0] = x + dx
-            dst[i, 1] = y + dy
+            # --- Lower Eyelids (subtle Duchenne squint lift) ---
+            145: (0.0, -0.004),     # Left lower eyelid center
+            374: (0.0, -0.004),     # Right lower eyelid center
+            153: (0.0, -0.003),     # Left lower eyelid side
+            154: (0.0, -0.003),     # Left lower eyelid side
+            380: (0.0, -0.003),     # Right lower eyelid side
+            381: (0.0, -0.003),     # Right lower eyelid side
+        }
 
-        face_points = np.array([landmarks[i] for i in jaw], dtype=np.float32) if jaw else self._face_points(landmarks)
-        warped = self._rbf_warp(image_np, src, dst, face_points, smooth=smooth)
-        return _blend(image_np, warped, intensity, low=0.42, high=0.76)
+        # Build list of active source and destination control points
+        src_list = []
+        dst_list = []
+        for lm_id, (dx, dy) in smile_shifts.items():
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx + scale * dx * intensity_eff, sy + scale * dy * intensity_eff))
+
+        # Anchor points to ensure stable nose, forehead, jaw, ears, and upper eyelids
+        anchor_ids = self._safe_ids(
+            # Forehead
+            REGION_INDICES["forehead_anchors"] +
+            # Nose bridge & stable nose points
+            [168, 6, 197, 195, 1, 2, 94] +
+            # Upper eyelids (to keep upper eye shape completely stable)
+            [159, 160, 161, 158, 157, 386, 385, 384, 387, 388] +
+            # Outer jawline
+            REGION_INDICES["jawline_outer"] +
+            # Ear/Side anchors
+            REGION_INDICES["ear_side_anchors"],
+            n
+        )
+        # Deduplicate anchor IDs that might already be in smile_shifts
+        moving_set = set(smile_shifts.keys())
+        anchor_ids = list(set(anchor_ids) - moving_set)
+
+        for lm_id in anchor_ids:
+            if lm_id < n:
+                sx, sy = landmarks[lm_id]
+                src_list.append((sx, sy))
+                dst_list.append((sx, sy))  # zero displacement anchor
+
+        if not src_list:
+            return image_np.copy()
+
+        src_arr = np.array(src_list, dtype=np.float32)
+        dst_arr = np.array(dst_list, dtype=np.float32)
+        face_points = self._face_points(landmarks)
+
+        # Apply smooth thin-plate spline global warp
+        warped = self._rbf_warp(image_np, src_arr, dst_arr, face_points, smooth=smooth)
+
+        # Create a soft blend zone mask for the lower face (lips, cheeks, lower nose, lower eyes)
+        # so that background, hair, ears, and forehead remain 100% original and clean.
+        zone_ids = self._safe_ids(
+            REGION_INDICES["lips_all"] +
+            REGION_INDICES["nasolabial"] +
+            REGION_INDICES["eye_lower"] +
+            [1, 2, 94, 168, 6],
+            n
+        )
+        zone_pts = [landmarks[i] for i in zone_ids]
+        zone = _polygon_mask(zone_pts, h, w, blur=31, dilate_iter=2)
+        zone3 = np.stack([zone, zone, zone], axis=2)
+
+        # Composite the warped smile region back onto the original image
+        out_f = image_np.astype(np.float32) * (1.0 - zone3) + warped.astype(np.float32) * zone3
+
+        # Recover fine high-frequency skin textures in the morphed area to prevent blurriness
+        base = cv2.GaussianBlur(image_np.astype(np.float32), (0, 0), sigmaX=1.0, sigmaY=1.0)
+        detail = image_np.astype(np.float32) - base
+        # Gain is scaled slightly with intensity
+        gain = float(np.clip(0.12 + 0.05 * intensity_eff, 0.08, 0.22))
+        out_f = np.clip(out_f + gain * detail, 0, 255)
+
+        return out_f.astype(np.uint8)
 
     def pro_brow_lift(
         self,
@@ -469,20 +691,27 @@ class ProWarpManager:
         operation = "brow_lift"
         print(f"[DEBUG] Moving region: {operation} with {len(brows)} points.")
 
+        h, w = image_np.shape[:2]
+        scale = float(min(image_np.shape[:2]))
+        intensity_eff = float(np.clip(intensity, 0.0, 1.0))
+
+        # Per-landmark upward lift as a fraction of face scale. Brow-arc peak
+        # points lift the most; tail points less, for a natural arch.
+        lift_strength = {
+            70: 0.020, 63: 0.016, 105: 0.016, 66: 0.014, 107: 0.013,
+            300: 0.020, 293: 0.016, 334: 0.016, 296: 0.014, 336: 0.013,
+        }
+
+        # Smooth global RBF warp: each brow control point is moved up by its
+        # lift amount while the eye landmarks are pinned (dst == src → zero
+        # displacement). This replaces the old localized vertical flow warp,
+        # which left the forehead above the brow fixed and so produced a
+        # "ghost brow" smear. The RBF spreads the deformation smoothly across
+        # the forehead and never tears the brow/eyelid boundary.
         src = np.array([landmarks[i] for i in brows], dtype=np.float32)
         dst = src.copy()
-
-        scale = float(min(image_np.shape[:2]))
-
-        # Outer IDs of each arc get an extra lift for arch shaping.
-        left_outer_ids  = {brow_left[0], brow_left[-1]}  if brow_left  else set()
-        right_outer_ids = {brow_right[0], brow_right[-1]} if brow_right else set()
-
-        for i, lm_id in enumerate(brows):
-            dy = -scale * 0.038 * intensity
-            if lm_id in left_outer_ids or lm_id in right_outer_ids:
-                dy += -scale * 0.015 * intensity
-            dst[i, 1] += dy
+        for k, lm_id in enumerate(brows):
+            dst[k, 1] -= scale * lift_strength.get(lm_id, 0.011) * intensity_eff
 
         # Eye landmarks added as zero-displacement anchors: the RBF is forced
         # to produce zero displacement at the eye boundary, preventing the eyes
@@ -508,9 +737,9 @@ class ProWarpManager:
         # Brow blend zone: brow arcs + forehead top + upper eyelid boundary.
         h, w = image_np.shape[:2]
         forehead_top = self._safe_ids([10, 9, 151, 337, 299, 109, 67], n)
-        upper_lid    = self._safe_ids([159, 160, 161, 386, 385, 384], n)
+        upper_lid = self._safe_ids([159, 160, 161, 386, 385, 384], n)
         brow_zone_pts = [landmarks[i] for i in brow_left + brow_right + forehead_top + upper_lid]
-        zone = _polygon_mask(brow_zone_pts, h, w, blur=13, dilate_iter=1)
+        zone = _polygon_mask(brow_zone_pts, h, w, blur=11, dilate_iter=1)
 
         # Explicitly cut out each eye hull from the blend zone so no warped eye
         # pixels are ever composited in, even if the RBF residual is non-zero.
@@ -527,7 +756,7 @@ class ProWarpManager:
                 zone = np.clip(zone - eye_mask, 0.0, 1.0)
 
         zone3 = np.stack([zone, zone, zone], axis=2)
-        alpha = float(np.clip(0.45 + intensity * (0.82 - 0.45), 0.0, 1.0))
+        alpha = float(np.clip(0.55 + intensity_eff * (0.82 - 0.55), 0.0, 1.0))
         blended = image_np.astype(np.float32) * (1.0 - alpha * zone3) + warped.astype(np.float32) * (alpha * zone3)
         return np.clip(blended, 0, 255).astype(np.uint8)
 

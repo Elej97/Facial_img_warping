@@ -4,7 +4,7 @@
 
 1. Python CV service:
    - `cd python_service`
-   - `py -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
+   - `python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
 2. Backend proxy:
    - `cd backend`
    - `node server.js`

@@ -232,6 +232,26 @@ def _apply_facial_sagging(image_np: np.ndarray, landmarks: list[tuple[int, int]]
             dy = scale * (0.004 + 0.011 * intensity) * (0.75 + 0.55 * center_weight)
             _add_gaussian_flow(flow_x, flow_y, landmarks[idx], (0.0, dy), sigma=scale * 0.060)
 
+    # Protect the eyes and everything above them. The large gaussians used above
+    # reach up into the eye region and, because they accumulate, they would
+    # otherwise drag the eyes downward and "melt" the midface. Suppress all flow
+    # above the lower-eyelid line with a smooth vertical ramp.
+    lid_ids = [i for i in (145, 374, 159, 386) if i < len(landmarks)]
+    if lid_ids:
+        eye_bottom = max(landmarks[i][1] for i in lid_ids)
+        ramp = max(1.0, scale * 0.05)
+        ys = np.arange(h, dtype=np.float32).reshape(-1, 1)
+        # 0 above (eye_bottom - ramp), smoothly up to 1 below eye_bottom.
+        vmask = np.clip((ys - (eye_bottom - ramp)) / ramp, 0.0, 1.0)
+        flow_x *= vmask
+        flow_y *= vmask
+
+    # Cap the accumulated displacement so overlapping gaussians can never produce
+    # an extreme (face-tearing) warp regardless of image size or landmark spread.
+    max_disp = scale * 0.018
+    np.clip(flow_x, -max_disp, max_disp, out=flow_x)
+    np.clip(flow_y, -max_disp, max_disp, out=flow_y)
+
     return _apply_flow_warp(image_np, flow_x, flow_y)
 
 
