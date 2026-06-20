@@ -15,7 +15,14 @@
       "Bash(npx tsc *)",
       "Bash(/opt/homebrew/bin/node node_modules/.bin/tsc --noEmit)",
       "Bash(./node_modules/.bin/tsc --noEmit)",
-      "Bash(grep -nE \"^\\\\s*\\\\\\)\\\\}|^\\\\s*\\\\\\)\\\\s*$|^\\\\s*\\\\}\\\\\\)\" /Users/mehmetkurt/Documents/OKUL/SIGNAL/Facial_img_warping/frontend/app/create.tsx)"
+      "Bash(grep -nE \"^\\\\s*\\\\\\)\\\\}|^\\\\s*\\\\\\)\\\\s*$|^\\\\s*\\\\}\\\\\\)\" /Users/mehmetkurt/Documents/OKUL/SIGNAL/Facial_img_warping/frontend/app/create.tsx)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(npx expo *)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(curl -s http://localhost:8081)",
+      "Bash(open \"http://localhost:8081/camera\")",
+      "Bash(screencapture -x /tmp/ar_camera.png)"
     ]
   }
 }

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AREngine, GlassesStyle } from './ar-engine';
 
 type LandmarkPoint = { x: number; y: number; z?: number };
 
-const DETECT_INTERVAL_MS = 80;
-const SMOOTH_ALPHA = 0.72;
+const DETECT_INTERVAL_MS = 60;
+const SMOOTH_ALPHA = 0.68;
 
 const smoothLandmarks = (previous: LandmarkPoint[] | null, next: LandmarkPoint[]) => {
   if (!previous || previous.length !== next.length) {
@@ -13,10 +14,7 @@ const smoothLandmarks = (previous: LandmarkPoint[] | null, next: LandmarkPoint[]
 
   return next.map((point, index) => {
     const prev = previous[index];
-    if (!prev) {
-      return { ...point };
-    }
-
+    if (!prev) return { ...point };
     return {
       x: prev.x * SMOOTH_ALPHA + point.x * (1 - SMOOTH_ALPHA),
       y: prev.y * SMOOTH_ALPHA + point.y * (1 - SMOOTH_ALPHA),
@@ -27,11 +25,15 @@ const smoothLandmarks = (previous: LandmarkPoint[] | null, next: LandmarkPoint[]
   });
 };
 
+type AccessoryState = { glasses: boolean; hat: boolean; earrings: boolean };
+
 export default function WebRealtimeFace() {
   const videoRef = useRef<any>(null);
   const canvasRef = useRef<any>(null);
+  const arCanvasRef = useRef<any>(null);
   const streamRef = useRef<any>(null);
   const landmarkerRef = useRef<any>(null);
+  const arEngineRef = useRef<AREngine | null>(null);
   const rafRef = useRef<number | null>(null);
 
   const lastFrameRef = useRef<any>(null);
@@ -42,12 +44,41 @@ export default function WebRealtimeFace() {
 
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState('Hazır');
-  const [showLandmarks, setShowLandmarks] = useState(true);
-  const showLandmarksRef = useRef(true);
+  const [showLandmarks, setShowLandmarks] = useState(false);
+  const showLandmarksRef = useRef(false);
 
+  const [accessories, setAccessories] = useState<AccessoryState>({
+    glasses: false,
+    hat: false,
+    earrings: false,
+  });
+  const accessoriesRef = useRef<AccessoryState>({ glasses: false, hat: false, earrings: false });
+
+  const [glassesStyle, setGlassesStyleState] = useState<GlassesStyle>('ski');
+
+  const changeGlassesStyle = (style: GlassesStyle) => {
+    setGlassesStyleState(style);
+    arEngineRef.current?.setGlassesStyle(style);
+  };
+
+  // Keep ref in sync and update the AR engine
   useEffect(() => {
     showLandmarksRef.current = showLandmarks;
   }, [showLandmarks]);
+
+  useEffect(() => {
+    accessoriesRef.current = accessories;
+    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings);
+  }, [accessories]);
+
+  // Initialise Three.js AR engine once the AR canvas is in the DOM
+  const initAR = () => {
+    if (arEngineRef.current || !arCanvasRef.current) return;
+    const engine = new AREngine(arCanvasRef.current as unknown as HTMLCanvasElement);
+    const acc = accessoriesRef.current;
+    engine.setAccessories(acc.glasses, acc.hat, acc.earrings);
+    arEngineRef.current = engine;
+  };
 
   const init = async () => {
     if (landmarkerRef.current) return;
@@ -77,9 +108,7 @@ export default function WebRealtimeFace() {
 
   const drawLandmarks = (ctx: any, points: any[], width: number, height: number) => {
     if (!showLandmarksRef.current) return;
-
     ctx.fillStyle = '#00ffff';
-
     for (const p of points) {
       ctx.beginPath();
       ctx.arc(p.x * width, p.y * height, 1.5, 0, Math.PI * 2);
@@ -92,28 +121,20 @@ export default function WebRealtimeFace() {
     const frame = lastFrameRef.current;
     const points = lastPointsRef.current;
     const { width, height } = lastSizeRef.current;
-
     if (!canvas || !frame) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
     canvas.width = width;
     canvas.height = height;
-
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(frame, 0, 0, width, height);
-
-    if (points) {
-      drawLandmarks(ctx, points, width, height);
-    }
+    if (points) drawLandmarks(ctx, points, width, height);
   };
 
   const drawLiveFrame = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const landmarker = landmarkerRef.current;
-
     if (!video || !canvas || !landmarker) return;
 
     const width = video.videoWidth || 800;
@@ -140,9 +161,24 @@ export default function WebRealtimeFace() {
         points = smoothLandmarks(lastPointsRef.current, detected);
         lastPointsRef.current = points;
         lastSeenAtRef.current = now;
+
+        // Update 3D accessories — pass z values (MediaPipe provides them)
+        const arEngine = arEngineRef.current;
+        if (arEngine && points) {
+          const lm3d = points.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
+          arEngine.update(lm3d, width, height);
+        }
       } else if (now - lastSeenAtRef.current > 400) {
         points = null;
         lastPointsRef.current = null;
+        arEngineRef.current?.clear();
+      }
+    } else if (points) {
+      // Re-render accessories at last known position every frame for smoothness
+      const arEngine = arEngineRef.current;
+      if (arEngine) {
+        const lm3d = points.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
+        arEngine.update(lm3d, width, height);
       }
     }
 
@@ -150,7 +186,7 @@ export default function WebRealtimeFace() {
 
     if (points) {
       drawLandmarks(ctx, points, width, height);
-      setMessage(`✔ ${points.length} landmark`);
+      setMessage(`Yüz bulundu · ${points.length} nokta`);
     } else {
       setMessage('Yüz aranıyor...');
     }
@@ -159,15 +195,11 @@ export default function WebRealtimeFace() {
   const freezeCurrentFrame = async () => {
     const video = videoRef.current;
     if (!video) return;
-
     const width = video.videoWidth || 800;
     const height = video.videoHeight || 450;
-
     lastSizeRef.current = { width, height };
-
     const bitmap = await createImageBitmap(video);
     lastFrameRef.current = bitmap;
-
     redrawFrozenFrame();
   };
 
@@ -178,17 +210,16 @@ export default function WebRealtimeFace() {
 
   const start = async () => {
     await init();
+    initAR();
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
     });
 
     streamRef.current = stream;
-
     const video = videoRef.current;
     video.srcObject = stream;
-
     await video.play();
 
     setRunning(true);
@@ -200,8 +231,8 @@ export default function WebRealtimeFace() {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-
     await freezeCurrentFrame();
+    arEngineRef.current?.clear();
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track: any) => track.stop());
@@ -222,32 +253,95 @@ export default function WebRealtimeFace() {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach((track: any) => track.stop());
+      arEngineRef.current?.dispose();
     };
   }, []);
 
   if (Platform.OS !== 'web') {
     return (
       <View style={styles.center}>
-        <Text>Web demo sadece laptop için</Text>
+        <Text>Web demo sadece tarayıcı için</Text>
       </View>
     );
   }
 
+  const toggleAccessory = (key: keyof AccessoryState) => {
+    setAccessories(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Realtime Face Tracking</Text>
-      <Text>{message}</Text>
+      <Text style={styles.title}>AR Yüz Filtresi</Text>
+      <Text style={styles.message}>{message}</Text>
 
+      {/* Camera + AR overlay */}
       <View style={styles.stage}>
         {/* @ts-ignore */}
         <video ref={videoRef} style={{ display: 'none' }} muted playsInline />
+        {/* 2D canvas: video feed + optional landmark dots */}
         {/* @ts-ignore */}
         <canvas ref={canvasRef} style={styles.canvas} />
+        {/* Three.js WebGL canvas: 3D accessories, overlaid transparently */}
+        {/* @ts-ignore */}
+        <canvas ref={arCanvasRef} style={styles.arCanvas} />
       </View>
 
+      {/* Accessory toggles */}
+      <View style={styles.accessoryRow}>
+        <Pressable
+          onPress={() => toggleAccessory('glasses')}
+          style={[styles.accButton, accessories.glasses && styles.accButtonActive]}
+        >
+          <Text style={styles.accIcon}>👓</Text>
+          <Text style={styles.accLabel}>Gözlük</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => toggleAccessory('hat')}
+          style={[styles.accButton, accessories.hat && styles.accButtonActive]}
+        >
+          <Text style={styles.accIcon}>🎩</Text>
+          <Text style={styles.accLabel}>Şapka</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => toggleAccessory('earrings')}
+          style={[styles.accButton, accessories.earrings && styles.accButtonActive]}
+        >
+          <Text style={styles.accIcon}>💎</Text>
+          <Text style={styles.accLabel}>Küpe</Text>
+        </Pressable>
+      </View>
+
+      {/* Glasses style picker — visible only when glasses is active */}
+      {accessories.glasses && (
+        <View style={styles.styleRow}>
+          {([
+            { key: 'ski',     label: 'Kayak',   color: '#22aaff' },
+            { key: 'pixel',   label: 'Pixel',   color: '#cc44ff' },
+            { key: 'party',   label: 'Party',   color: '#ff8800' },
+            { key: 'g0',      label: 'Model A', color: '#aaaaaa' },
+            { key: 'g1',      label: 'Model B', color: '#888888' },
+            { key: 'g2',      label: 'Model C', color: '#666666' },
+            { key: 'g3',      label: 'Model D', color: '#444444' },
+            { key: 'g4',      label: 'Model E', color: '#333333' },
+          ] as { key: GlassesStyle; label: string; color: string }[]).map(({ key, label, color }) => (
+            <Pressable
+              key={key}
+              onPress={() => changeGlassesStyle(key)}
+              style={[styles.styleButton, glassesStyle === key && styles.styleButtonActive]}
+            >
+              <View style={[styles.styleColorDot, { backgroundColor: color }]} />
+              <Text style={styles.styleLabel}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Camera + debug controls */}
       <View style={styles.actions}>
         <Pressable onPress={running ? stop : start} style={styles.button}>
-          <Text style={{ color: '#fff' }}>{running ? 'Durdur' : 'Başlat'}</Text>
+          <Text style={styles.buttonText}>{running ? 'Durdur' : 'Başlat'}</Text>
         </Pressable>
 
         <Pressable
@@ -255,18 +349,12 @@ export default function WebRealtimeFace() {
             const next = !showLandmarks;
             showLandmarksRef.current = next;
             setShowLandmarks(next);
-
-            if (!running) {
-              redrawFrozenFrame();
-            }
+            if (!running) redrawFrozenFrame();
           }}
-          style={[
-            styles.button,
-            { backgroundColor: showLandmarks ? '#0891B2' : '#6B7280' },
-          ]}
+          style={[styles.button, styles.buttonSecondary]}
         >
-          <Text style={{ color: '#fff' }}>
-            {showLandmarks ? 'Landmark Gizle' : 'Landmark Göster'}
+          <Text style={styles.buttonText}>
+            {showLandmarks ? 'Noktaları Gizle' : 'Noktaları Göster'}
           </Text>
         </Pressable>
       </View>
@@ -279,19 +367,103 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    backgroundColor: '#F7F4FB',
+    gap: 14,
+    backgroundColor: '#0d0d14',
+    paddingVertical: 24,
+  },
+  title: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  message: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '600',
   },
   stage: {
     width: 800,
     height: 450,
-    backgroundColor: '#000',
-    borderRadius: 20,
+    borderRadius: 18,
     overflow: 'hidden',
+    backgroundColor: '#000',
+    position: 'relative',
   },
   canvas: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
     width: '100%',
     height: '100%',
+  },
+  // Three.js canvas sits on top — transparent bg, pointer-events: none so
+  // clicks still reach the controls behind it.
+  arCanvas: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    // @ts-ignore — React Native Web passes unknown CSS props through
+    pointerEvents: 'none',
+  },
+  accessoryRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  styleRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  styleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  styleButtonActive: {
+    backgroundColor: 'rgba(160,32,240,0.30)',
+    borderColor: '#a020f0',
+  },
+  styleColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  styleLabel: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  accButton: {
+    width: 88,
+    paddingVertical: 10,
+    borderRadius: 14,
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  accButtonActive: {
+    backgroundColor: 'rgba(160,32,240,0.35)',
+    borderColor: '#a020f0',
+  },
+  accIcon: {
+    fontSize: 22,
+  },
+  accLabel: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   actions: {
     flexDirection: 'row',
@@ -299,13 +471,17 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: '#7c3aed',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: 12,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
+  buttonSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 14,
   },
   center: {
     flex: 1,

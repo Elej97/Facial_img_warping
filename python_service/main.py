@@ -52,6 +52,7 @@ except Exception:
     _insight_app = None
 
 from modules.aging import apply_aging, apply_deaging
+from modules.sam_aging import apply_sam_aging, is_available as sam_available
 from modules.accessory_service import apply_accessory
 from modules.hair_segmentation import apply_hair_color
 from modules.evaluation_metrics import compute_quality_metrics
@@ -182,6 +183,56 @@ async def estimate_age(image: UploadFile = File(...)):
     }
 
 
+@app.post("/aging/sam")
+async def sam_guided_aging(
+    image: UploadFile = File(...),
+    mode: str = Form("aging"),          # "aging" | "deaging"
+    intensity: float = Form(0.6),
+    target_age: float = Form(-1.0),     # -1 → otomatik (aging=65, deaging=20)
+    landmark_backend: str = Form("hybrid"),
+):
+    """
+    SAM (Style-based Age Manipulation) ile foto kalitesinde yaşlandırma/gençleştirme.
+    Sadece foto modunda çağrılmalı — live modda kullanmayın (CPU'da 10-30s sürer).
+    """
+    if not sam_available():
+        return {
+            "success": False,
+            "message": (
+                "SAM kurulmamış. "
+                "git clone https://github.com/yuval-alaluf/SAM  python_service/vendor/SAM  "
+                "ve sam_ffhq_aging.pt dosyasını python_service/models/ klasörüne koyun."
+            ),
+        }
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        valid, err = validate_image(file_bytes, image.filename or "upload.jpg")
+        if not valid:
+            return {"success": False, "message": err}
+
+        img = bytes_to_numpy(file_bytes)
+        lms, landmark_info = detect_landmarks_fused(img, backend=landmark_backend, temporal_smoothing=False)
+        if lms is None:
+            return {"success": False, "message": "Yüz algılanamadı."}
+
+        if target_age < 0:
+            target_age = 65.0 if mode == "aging" else 20.0
+
+        result = apply_sam_aging(img, lms, target_age=target_age, intensity=intensity)
+
+        return {
+            "success": True,
+            "mode": mode,
+            "target_age": target_age,
+            "intensity": intensity,
+            "landmark_info": landmark_info,
+            "result_image_b64": numpy_to_b64(result),
+        }
+    except Exception as exc:
+        return {"success": False, "message": str(exc)}
+
+
 @app.post("/aging/ai")
 async def ai_guided_aging(
     image: UploadFile = File(...),
@@ -298,7 +349,9 @@ async def expression_transfer(
         if reference_lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected in reference image."}
 
-        transferred = transfer_expression(target_img, target_lms, reference_lms, intensity=intensity)
+        transferred = transfer_expression(
+            target_img, target_lms, reference_lms, intensity=intensity, reference_image=reference_img
+        )
 
         return {
             "success": True,

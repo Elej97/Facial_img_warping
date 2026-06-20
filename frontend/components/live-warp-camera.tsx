@@ -4,8 +4,11 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 
 import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
+import type { EarringStyle, GlassesStyle, HatStyle, NecklaceStyle, TieStyle } from './ar-engine';
+import { AREngine } from './ar-engine';
 
-type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
+export type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
+
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
 type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
 type LandmarkPoint = { x: number; y: number; z?: number };
@@ -185,6 +188,52 @@ const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
     [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95],
   ],
 };
+
+const GLASSES_NAMES = [
+  'Classic', 'Round', 'Square', 'Oval', 'Aviator', 'Retro', 'Thin Frame', 'Thick Frame', 
+  'Transparent', 'Colorful', 'Sunglasses', 'Sport', 'Vintage', 'Minimal', 'Cat Eye', 
+  'Geek', 'Night', 'Neon', 'Metal', 'Y2K', 'Soft', 'Crystal', 'Cyber', 'Chic', 'Urban'
+];
+const GLASSES_VARIANTS = [
+  { key: 'ski' as GlassesStyle, label: 'Kayak', color: '#22aaff' },
+  { key: 'pixel' as GlassesStyle, label: 'Pixel', color: '#cc44ff' },
+  { key: 'party' as GlassesStyle, label: 'Party', color: '#ff8800' },
+  ...GLASSES_NAMES.map((name, i) => ({
+    key: (i === 0 ? 'g0' : `g${i}`) as GlassesStyle,
+    label: name,
+    color: `hsl(${(i * 37) % 360},40%,55%)`,
+  })),
+];
+
+const HAT_VARIANTS = [
+  { key: 'top-hat' as HatStyle,        label: 'Silindir',    color: '#1a0f00' },
+  { key: 'baseball-cap' as HatStyle,   label: 'Şapka',       color: '#224488' },
+  { key: 'cowboy-hat' as HatStyle,     label: 'Kovboy',      color: '#8b6914' },
+  { key: 'fox-hat' as HatStyle,        label: 'Tilki',       color: '#cc5500' },
+  { key: 'frog-hat' as HatStyle,       label: 'Kurbağa',     color: '#227722' },
+  { key: 'graduation-cap' as HatStyle, label: 'Mezuniyet',   color: '#111111' },
+  { key: 'headphones' as HatStyle,     label: 'Kulaklık',    color: '#333344' },
+  { key: 'pirate-hat' as HatStyle,     label: 'Korsan',      color: '#111122' },
+  { key: 'sombrero' as HatStyle,       label: 'Sombrero',    color: '#cc9900' },
+  { key: 'wizard-hat' as HatStyle,     label: 'Büyücü',      color: '#440088' },
+  { key: 'cat-ears' as HatStyle,       label: 'Kedi Kulağı', color: '#ffaacc' },
+];
+
+const EARRING_VARIANTS = [
+  { key: 'hoop-earrings' as EarringStyle,  label: 'Halka',    color: '#d4a030' },
+  { key: 'pearl-earrings' as EarringStyle, label: 'İnci',     color: '#f0f0f0' },
+  { key: 'diamond-studs' as EarringStyle,  label: 'Elmas',    color: '#aaddff' },
+];
+
+const NECKLACE_VARIANTS = [
+  { key: 'necklace' as NecklaceStyle,       label: 'Kolye',  color: '#d4a030' },
+  { key: 'pearl-necklace' as NecklaceStyle, label: 'İnci',   color: '#f0f0f0' },
+];
+
+const TIE_VARIANTS = [
+  { key: 'necktie' as TieStyle, label: 'Kravat', color: '#1a1a1a' },
+  { key: 'bowtie' as TieStyle,  label: 'Papyon', color: '#882222' },
+];
 
 const GRID_N = 18;
 const SIGMA = 0.10;
@@ -664,6 +713,8 @@ type LiveWarpCameraProps = {
 export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCameraProps) {
   const videoRef = useRef<any>(null);
   const canvasRef = useRef<any>(null);
+  const arCanvasRef = useRef<any>(null);
+  const arEngineRef = useRef<AREngine | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const agingPreviewImageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<any>(null);
@@ -704,6 +755,52 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     lip: 0,
   });
   const [splitScreen, setSplitScreen] = useState(true);
+  const [activeCategory, setActiveCategory] = useState<'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie' | null>(null);
+  const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false, necklace: false, tie: false });
+  const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false, necklace: false, tie: false });
+  const [glassesStyle, setGlassesStyle] = useState<GlassesStyle>('ski');
+  const [hatStyle, setHatStyle] = useState<HatStyle>('top-hat');
+  const [earringStyle, setEarringStyle] = useState<EarringStyle>('hoop-earrings');
+  const [necklaceStyle, setNecklaceStyle] = useState<NecklaceStyle>('necklace');
+  const [tieStyle, setTieStyle] = useState<TieStyle>('necktie');
+
+  const handleAccessoryPress = (key: 'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie') => {
+    if (accessories[key]) {
+      if (activeCategory === key) {
+        // Active and focused -> Turn off completely
+        setAccessories(prev => ({ ...prev, [key]: false }));
+        setActiveCategory(null);
+      } else {
+        // Active but not focused -> Just switch focus tab
+        setActiveCategory(key);
+      }
+    } else {
+      // Inactive -> Turn on and focus
+      setAccessories(prev => ({ ...prev, [key]: true }));
+      setActiveCategory(key);
+    }
+  };
+
+  const changeGlassesStyle = (style: GlassesStyle) => {
+    setGlassesStyle(style);
+    arEngineRef.current?.setGlassesStyle(style);
+  };
+  const changeHatStyle = (style: HatStyle) => {
+    setHatStyle(style);
+    arEngineRef.current?.setHatStyle(style);
+  };
+  const changeEarringStyle = (style: EarringStyle) => {
+    setEarringStyle(style);
+    arEngineRef.current?.setEarringStyle(style);
+  };
+  const changeNecklaceStyle = (style: NecklaceStyle) => {
+    setNecklaceStyle(style);
+    arEngineRef.current?.setNecklaceStyle(style);
+  };
+  const changeTieStyle = (style: TieStyle) => {
+    setTieStyle(style);
+    arEngineRef.current?.setTieStyle(style);
+  };
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
   const proLabEnabledRef = useRef(proLabEnabled);
@@ -724,12 +821,25 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   useEffect(() => { showLandmarksRef.current = showLandmarks; }, [showLandmarks]);
 
   useEffect(() => {
+    accessoriesRef.current = accessories;
+    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings, accessories.necklace, accessories.tie);
+  }, [accessories]);
+
+  useEffect(() => {
     if (!proLabEnabled || !activeProOperations.some((operation) => operation === 'aging' || operation === 'deaging')) {
       agingPreviewImageRef.current = null;
       previewInFlightRef.current = false;
       lastPreviewStartAtRef.current = 0;
     }
   }, [activeProOperations, proLabEnabled]);
+
+  const initAR = () => {
+    if (arEngineRef.current || !arCanvasRef.current) return;
+    const engine = new AREngine(arCanvasRef.current as unknown as HTMLCanvasElement);
+    const acc = accessoriesRef.current;
+    engine.setAccessories(acc.glasses, acc.hat, acc.earrings, acc.necklace, acc.tie);
+    arEngineRef.current = engine;
+  };
 
   const init = async () => {
     if (landmarkerRef.current) return;
@@ -889,6 +999,17 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       } else if (lastFaceSeenAtRef.current && now - lastFaceSeenAtRef.current > 420) {
         lm = null;
         smoothedLandmarksRef.current = null;
+      }
+    }
+
+    // Update 3D accessories overlay
+    const arEngine = arEngineRef.current;
+    if (arEngine) {
+      if (lm && lm.length >= 478) {
+        const lm3d = lm.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
+        arEngine.update(lm3d, W, H, splitScreen);
+      } else if (!lastFaceSeenAtRef.current || now - lastFaceSeenAtRef.current > 420) {
+        arEngine.clear();
       }
     }
 
@@ -1068,6 +1189,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const start = async () => {
     try {
       await init();
+      initAR();
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 960 }, height: { ideal: 720 }, facingMode: 'user' },
         audio: false,
@@ -1103,6 +1225,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     setRunning(false);
     setMessage('Durduruldu');
     setFps(0);
+    arEngineRef.current?.clear();
   };
 
   const capture = () => {
@@ -1211,6 +1334,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach((t: any) => t.stop());
+      arEngineRef.current?.dispose();
     };
   }, []);
 
@@ -1238,6 +1362,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
           <video ref={videoRef} style={{ display: 'none' }} muted playsInline />
           {/* @ts-ignore */}
           <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+
+          {/* Three.js AR accessories — transparent overlay, pointer events disabled */}
+          <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+            {/* @ts-ignore */}
+            <canvas ref={arCanvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+          </View>
 
           <View style={styles.stageOverlay} pointerEvents="box-none">
             <View style={styles.topPills}>
@@ -1305,6 +1435,106 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                 <Text style={[styles.smallBtnText, { color: text }]}>Sıfırla</Text>
               </Pressable>
             </View>
+
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionLabel, { color: muted }]}>AKSESUAR 3D</Text>
+            </View>
+            <View style={styles.accessoryRow}>
+              {([
+                { key: 'glasses',  label: 'Gözlük', icon: '👓' },
+                { key: 'hat',      label: 'Şapka',  icon: '🎩' },
+                { key: 'earrings', label: 'Küpe',   icon: '💎' },
+                { key: 'necklace', label: 'Kolye',  icon: '📿' },
+                { key: 'tie',      label: 'Kravat', icon: '👔' },
+              ] as const).map(({ key, label, icon }) => (
+                <Pressable
+                  key={key}
+                  onPress={() => handleAccessoryPress(key)}
+                  style={[
+                    styles.accessoryButton,
+                    {
+                      backgroundColor: accessories[key]
+                        ? 'rgba(160,32,240,0.30)'
+                        : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      borderColor: (accessories[key] && activeCategory === key) ? accent : (accessories[key] ? 'rgba(160,32,240,0.5)' : panelBorder),
+                    },
+                  ]}
+                >
+                  <Text style={styles.accessoryIcon}>{icon}</Text>
+                  <Text style={[styles.accessoryLabel, { color: accessories[key] ? '#fff' : text }]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {activeCategory && (
+              <View style={[styles.variantsCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderColor: panelBorder }]}>
+                <View style={styles.variantsHeader}>
+                  <Text style={[styles.variantsTitle, { color: text }]}>
+                    {activeCategory === 'glasses' ? '👓 Gözlük Stilleri' :
+                     activeCategory === 'hat' ? '🎩 Şapka Stilleri' :
+                     activeCategory === 'earrings' ? '💎 Küpe Stilleri' :
+                     activeCategory === 'necklace' ? '📿 Kolye Stilleri' :
+                     '👔 Kravat & Papyon Stilleri'}
+                  </Text>
+                </View>
+                <ScrollView 
+                  style={{ maxHeight: 250 }} 
+                  contentContainerStyle={styles.variantsGrid}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled={true}>
+                  
+                  {activeCategory === 'glasses' && GLASSES_VARIANTS.map(({ key, label, color }) => (
+                    <Pressable key={key} onPress={() => changeGlassesStyle(key)}
+                      style={[styles.variantButton, {
+                        backgroundColor: glassesStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: glassesStyle === key ? accent : panelBorder }]}>
+                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
+                      <Text style={[styles.variantLabel, { color: glassesStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                    </Pressable>
+                  ))}
+
+                  {activeCategory === 'hat' && HAT_VARIANTS.map(({ key, label, color }) => (
+                    <Pressable key={key} onPress={() => changeHatStyle(key)}
+                      style={[styles.variantButton, {
+                        backgroundColor: hatStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: hatStyle === key ? accent : panelBorder }]}>
+                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
+                      <Text style={[styles.variantLabel, { color: hatStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                    </Pressable>
+                  ))}
+
+                  {activeCategory === 'earrings' && EARRING_VARIANTS.map(({ key, label, color }) => (
+                    <Pressable key={key} onPress={() => changeEarringStyle(key)}
+                      style={[styles.variantButton, {
+                        backgroundColor: earringStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: earringStyle === key ? accent : panelBorder }]}>
+                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
+                      <Text style={[styles.variantLabel, { color: earringStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                    </Pressable>
+                  ))}
+
+                  {activeCategory === 'necklace' && NECKLACE_VARIANTS.map(({ key, label, color }) => (
+                    <Pressable key={key} onPress={() => changeNecklaceStyle(key)}
+                      style={[styles.variantButton, {
+                        backgroundColor: necklaceStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: necklaceStyle === key ? accent : panelBorder }]}>
+                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
+                      <Text style={[styles.variantLabel, { color: necklaceStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                    </Pressable>
+                  ))}
+
+                  {activeCategory === 'tie' && TIE_VARIANTS.map(({ key, label, color }) => (
+                    <Pressable key={key} onPress={() => changeTieStyle(key)}
+                      style={[styles.variantButton, {
+                        backgroundColor: tieStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: tieStyle === key ? accent : panelBorder }]}>
+                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
+                      <Text style={[styles.variantLabel, { color: tieStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
 
             <View style={styles.sectionRow}>
               <Text style={[styles.sectionLabel, { color: muted }]}>LAB</Text>
@@ -1877,5 +2107,72 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 14,
     marginTop: 4,
+  },
+  accessoryRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  accessoryButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    gap: 3,
+  },
+  accessoryIcon: {
+    fontSize: 20,
+  },
+  accessoryLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  variantsCard: {
+    marginTop: 8,
+    marginBottom: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingTop: 12,
+    paddingBottom: 4,
+    paddingHorizontal: 12,
+  },
+  variantsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  variantsTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  variantsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingBottom: 8,
+  },
+  variantButton: {
+    width: '31%',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  variantColorThumb: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  variantLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });

@@ -67,6 +67,49 @@ def detect_landmarks(image_np: np.ndarray) -> list[tuple] | None:
     return [(int(lm.x * w), int(lm.y * h)) for lm in result.face_landmarks[0]]
 
 
+def _build_blendshape_landmarker():
+    model_path = get_model_path('face_landmarker')
+    options = mp_vision.FaceLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=model_path),
+        num_faces=1,
+        output_face_blendshapes=True,
+        min_face_detection_confidence=0.5,
+        min_face_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    return mp_vision.FaceLandmarker.create_from_options(options)
+
+
+_blendshape_landmarker = None
+
+
+def detect_blendshapes(image_np: np.ndarray) -> dict | None:
+    """Identity-independent expression scores (ARKit-style 52 blendshapes, 0..1).
+
+    This is the expression signal that does NOT depend on who the face belongs to,
+    so it can be compared/transferred across different people. Lazily initialised so
+    it does not slow service startup. Returns {category_name: score} or None.
+    """
+    global _blendshape_landmarker
+    if _blendshape_landmarker is None:
+        _blendshape_landmarker = _build_blendshape_landmarker()
+
+    h, w = image_np.shape[:2]
+    target_dim = 1280
+    if max(h, w) > target_dim:
+        scale = target_dim / max(h, w)
+        proc = cv2.resize(image_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+    else:
+        proc = image_np
+
+    rgb = cv2.cvtColor(proc, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    result = _blendshape_landmarker.detect(mp_image)
+    if not result.face_blendshapes:
+        return None
+    return {c.category_name: float(c.score) for c in result.face_blendshapes[0]}
+
+
 def draw_landmarks(image_np: np.ndarray, landmarks: list[tuple]) -> np.ndarray:
     out = image_np.copy()
     n = len(landmarks)

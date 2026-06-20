@@ -74,7 +74,8 @@ function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
 }
 
 async function requestJson(endpoint: string, body: FormData): Promise<any> {
-  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+  const cleanEndpoint = endpoint.replace(/^\/api/, '');
+  const response = await fetch(`${API_BASE}${cleanEndpoint}`, { method: 'POST', body });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -113,7 +114,8 @@ async function requestDownload(endpoint: string, body: FormData, fallbackName: s
   filename: string;
   mimeType: string;
 }> {
-  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+  const cleanEndpoint = endpoint.replace(/^\/api/, '');
+  const response = await fetch(`${API_BASE}${cleanEndpoint}`, { method: 'POST', body });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -382,6 +384,26 @@ export async function aiGuidedAgingFromBase64(
   return requestJson('/api/aging/ai', formData);
 }
 
+export async function agingSamFromBase64(
+  imageBase64: string,
+  mode: 'aging' | 'deaging',
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+    targetAge?: number;   // 0-100 arası; belirtilmezse backend otomatik seçer
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('mode', mode);
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  if (options?.targetAge !== undefined) {
+    formData.append('target_age', String(options.targetAge));
+  }
+  return requestJson('/api/aging/sam', formData);
+}
+
 export type MakeupRegion = 'lip' | 'cheek' | 'brow' | 'lash' | 'eye' | 'teeth';
 
 export async function applyMakeupFromBase64(
@@ -442,7 +464,7 @@ export type AccessoryStyle = 'classic' | 'round' | 'aviator' | 'heart' | 'handle
 
 export function accessoryAssetUrl(path: string): string {
   const normalized = path.replace(/^\/+/, '');
-  return `${API_BASE}/api/assets/accessories/${normalized}`;
+  return `${API_BASE}/assets/accessories/${normalized}`;
 }
 
 export async function applyAccessoryFromBase64(
