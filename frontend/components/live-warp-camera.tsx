@@ -4,7 +4,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 
 import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
-import { AREngine, GlassesStyle } from './ar-engine';
+import { AREngine, GlassesStyle, HatStyle, EarringStyle, NecklaceStyle } from './ar-engine';
 
 type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
@@ -707,13 +707,28 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     lip: 0,
   });
   const [splitScreen, setSplitScreen] = useState(true);
-  const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false });
-  const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false });
-  const [glassesStyle, setGlassesStyle] = useState<GlassesStyle>('classic');
+  const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false, necklace: false });
+  const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false, necklace: false });
+  const [glassesStyle, setGlassesStyle] = useState<GlassesStyle>('ski');
+  const [hatStyle, setHatStyle] = useState<HatStyle>('top-hat');
+  const [earringStyle, setEarringStyle] = useState<EarringStyle>('hoop-earrings');
+  const [necklaceStyle, setNecklaceStyle] = useState<NecklaceStyle>('necklace');
 
   const changeGlassesStyle = (style: GlassesStyle) => {
     setGlassesStyle(style);
     arEngineRef.current?.setGlassesStyle(style);
+  };
+  const changeHatStyle = (style: HatStyle) => {
+    setHatStyle(style);
+    arEngineRef.current?.setHatStyle(style);
+  };
+  const changeEarringStyle = (style: EarringStyle) => {
+    setEarringStyle(style);
+    arEngineRef.current?.setEarringStyle(style);
+  };
+  const changeNecklaceStyle = (style: NecklaceStyle) => {
+    setNecklaceStyle(style);
+    arEngineRef.current?.setNecklaceStyle(style);
   };
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
@@ -736,7 +751,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   useEffect(() => {
     accessoriesRef.current = accessories;
-    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings);
+    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings, accessories.necklace);
   }, [accessories]);
 
   useEffect(() => {
@@ -751,7 +766,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     if (arEngineRef.current || !arCanvasRef.current) return;
     const engine = new AREngine(arCanvasRef.current as unknown as HTMLCanvasElement);
     const acc = accessoriesRef.current;
-    engine.setAccessories(acc.glasses, acc.hat, acc.earrings);
+    engine.setAccessories(acc.glasses, acc.hat, acc.earrings, acc.necklace);
     arEngineRef.current = engine;
   };
 
@@ -1355,9 +1370,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
             </View>
             <View style={styles.accessoryRow}>
               {([
-                { key: 'glasses', label: 'Gözlük', icon: '👓' },
-                { key: 'hat',     label: 'Şapka',  icon: '🎩' },
-                { key: 'earrings',label: 'Küpe',   icon: '💎' },
+                { key: 'glasses',  label: 'Gözlük', icon: '👓' },
+                { key: 'hat',      label: 'Şapka',  icon: '🎩' },
+                { key: 'earrings', label: 'Küpe',   icon: '💎' },
+                { key: 'necklace', label: 'Kolye',  icon: '📿' },
               ] as const).map(({ key, label, icon }) => (
                 <Pressable
                   key={key}
@@ -1381,28 +1397,82 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
             {accessories.glasses && (
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
                 {([
-                  { key: 'classic', label: 'Klasik', color: '#111122' },
-                  { key: 'round',   label: 'Altın',  color: '#d4a030' },
-                  { key: 'aviator', label: 'Aviator', color: '#b0b8c8' },
-                  { key: 'square',  label: 'Kare',    color: '#1a2233' },
+                  { key: 'ski',  label: 'Kayak', color: '#22aaff' },
+                  { key: 'pixel',label: 'Pixel', color: '#cc44ff' },
+                  { key: 'party',label: 'Party', color: '#ff8800' },
+                  ...Array.from({ length: 25 }, (_, i) => ({
+                    key: (i === 0 ? 'g0' : `g${i}`) as GlassesStyle,
+                    label: `#${i + 1}`,
+                    color: `hsl(${(i * 37) % 360},40%,55%)`,
+                  })),
                 ] as { key: GlassesStyle; label: string; color: string }[]).map(({ key, label, color }) => (
-                  <Pressable
-                    key={key}
-                    onPress={() => changeGlassesStyle(key)}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
-                      paddingHorizontal: 12,
-                      paddingVertical: 7,
-                      borderRadius: 10,
+                  <Pressable key={key} onPress={() => changeGlassesStyle(key)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
                       backgroundColor: glassesStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                      borderWidth: 1.5,
-                      borderColor: glassesStyle === key ? accent : panelBorder,
-                    }}
-                  >
+                      borderWidth: 1.5, borderColor: glassesStyle === key ? accent : panelBorder }}>
                     <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} />
                     <Text style={{ color: glassesStyle === key ? '#fff' : text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {accessories.hat && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
+                {([
+                  { key: 'top-hat',        label: 'Silindir',    color: '#1a0f00' },
+                  { key: 'baseball-cap',   label: 'Şapka',       color: '#224488' },
+                  { key: 'cowboy-hat',     label: 'Kovboy',      color: '#8b6914' },
+                  { key: 'fox-hat',        label: 'Tilki',       color: '#cc5500' },
+                  { key: 'frog-hat',       label: 'Kurbağa',     color: '#227722' },
+                  { key: 'graduation-cap', label: 'Mezuniyet',   color: '#111111' },
+                  { key: 'headphones',     label: 'Kulaklık',    color: '#333344' },
+                  { key: 'pirate-hat',     label: 'Korsan',      color: '#111122' },
+                  { key: 'sombrero',       label: 'Sombrero',    color: '#cc9900' },
+                  { key: 'wizard-hat',     label: 'Büyücü',      color: '#440088' },
+                  { key: 'cat-ears',       label: 'Kedi Kulağı', color: '#ffaacc' },
+                ] as { key: HatStyle; label: string; color: string }[]).map(({ key, label, color }) => (
+                  <Pressable key={key} onPress={() => changeHatStyle(key)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
+                      backgroundColor: hatStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      borderWidth: 1.5, borderColor: hatStyle === key ? accent : panelBorder }}>
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} />
+                    <Text style={{ color: hatStyle === key ? '#fff' : text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {accessories.earrings && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
+                {([
+                  { key: 'hoop-earrings',  label: 'Halka',    color: '#d4a030' },
+                  { key: 'pearl-earrings', label: 'İnci',     color: '#f0f0f0' },
+                  { key: 'diamond-studs',  label: 'Elmas',    color: '#aaddff' },
+                ] as { key: EarringStyle; label: string; color: string }[]).map(({ key, label, color }) => (
+                  <Pressable key={key} onPress={() => changeEarringStyle(key)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
+                      backgroundColor: earringStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      borderWidth: 1.5, borderColor: earringStyle === key ? accent : panelBorder }}>
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} />
+                    <Text style={{ color: earringStyle === key ? '#fff' : text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {accessories.necklace && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
+                {([
+                  { key: 'necklace',       label: 'Kolye',  color: '#d4a030' },
+                  { key: 'pearl-necklace', label: 'İnci',   color: '#f0f0f0' },
+                ] as { key: NecklaceStyle; label: string; color: string }[]).map(({ key, label, color }) => (
+                  <Pressable key={key} onPress={() => changeNecklaceStyle(key)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
+                      backgroundColor: necklaceStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      borderWidth: 1.5, borderColor: necklaceStyle === key ? accent : panelBorder }}>
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} />
+                    <Text style={{ color: necklaceStyle === key ? '#fff' : text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
                   </Pressable>
                 ))}
               </View>
