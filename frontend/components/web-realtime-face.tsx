@@ -54,7 +54,7 @@ export default function WebRealtimeFace() {
   });
   const accessoriesRef = useRef<AccessoryState>({ glasses: false, hat: false, earrings: false });
 
-  const [glassesStyle, setGlassesStyleState] = useState<GlassesStyle>('classic');
+  const [glassesStyle, setGlassesStyleState] = useState<GlassesStyle>('ski');
 
   const changeGlassesStyle = (style: GlassesStyle) => {
     setGlassesStyleState(style);
@@ -317,10 +317,14 @@ export default function WebRealtimeFace() {
       {accessories.glasses && (
         <View style={styles.styleRow}>
           {([
-            { key: 'classic', label: 'Klasik', color: '#111122' },
-            { key: 'round',   label: 'Altın',  color: '#d4a030' },
-            { key: 'aviator', label: 'Aviator', color: '#b0b8c8' },
-            { key: 'square',  label: 'Kare',    color: '#1a2233' },
+            { key: 'ski',     label: 'Kayak',   color: '#22aaff' },
+            { key: 'pixel',   label: 'Pixel',   color: '#cc44ff' },
+            { key: 'party',   label: 'Party',   color: '#ff8800' },
+            { key: 'g0',      label: 'Model A', color: '#aaaaaa' },
+            { key: 'g1',      label: 'Model B', color: '#888888' },
+            { key: 'g2',      label: 'Model C', color: '#666666' },
+            { key: 'g3',      label: 'Model D', color: '#444444' },
+            { key: 'g4',      label: 'Model E', color: '#333333' },
           ] as { key: GlassesStyle; label: string; color: string }[]).map(({ key, label, color }) => (
             <Pressable
               key={key}
