@@ -51,6 +51,29 @@ const TIE_URLS: Record<TieStyle, { obj?: string, mtl?: string, glb?: string, sca
   bowtie:  { obj: '/models/ties/Bowtie_01.obj?v=3', mtl: '/models/ties/Bowtie_01.mtl?v=3', scale: 1.2, dy: 0.1 },
 };
 
+export type MaskStyle = 'clown-mask' | 'fox-head' | 'anon-mask' | 'gas-mask';
+
+const MASK_URLS: Record<MaskStyle, string> = {
+  'clown-mask': '/models/masks/clown-mask.glb',
+  'fox-head':   '/models/masks/fox-head.glb',
+  'anon-mask':  '/models/masks/anon-mask.glb',
+  'gas-mask':   '/models/masks/gas-mask.glb',
+};
+
+const MASK_IPD_SCALE: Record<MaskStyle, number> = {
+  'clown-mask': 2.8,
+  'fox-head':   3.8,
+  'anon-mask':  2.5,
+  'gas-mask':   2.8,
+};
+
+const MASK_UP_OFFSET: Record<MaskStyle, number> = {
+  'clown-mask': -0.18,
+  'fox-head':    0.05,
+  'anon-mask':  -0.15,
+  'gas-mask':   -0.28,
+};
+
 const GLB_URLS: Record<GlassesStyle, string> = {
   ski:   '/models/glasses/ski-goggles.glb',
   pixel: '/models/glasses/pixel-glasses.glb',
@@ -146,6 +169,11 @@ export class AREngine {
   private activeTie: THREE.Group;
   private tieEnabled = false;
 
+  private maskMap: Record<MaskStyle, THREE.Group>;
+  private activeMask: THREE.Group;
+  private maskEnabled = false;
+  private activeMaskStyle: MaskStyle = 'anon-mask';
+
   private occluder: THREE.Mesh;
   private neckOccluder: THREE.Mesh;
 
@@ -227,11 +255,21 @@ export class AREngine {
     this.neckOccluder.visible = false;
     this.scene.add(this.neckOccluder);
 
+    this.maskMap = Object.fromEntries(
+      (Object.keys(MASK_URLS) as MaskStyle[]).map(k => {
+        const g = new THREE.Group(); g.renderOrder = 2; g.visible = false;
+        this.scene.add(g);
+        return [k, g];
+      })
+    ) as Record<MaskStyle, THREE.Group>;
+    this.activeMask = this.maskMap['anon-mask'];
+
     this.loadGLBModels();
     this.loadHatModels();
     this.loadEarringModels();
     this.loadNecklaceModels();
     this.loadTieModels();
+    this.loadMaskModels();
   }
 
   private loadGLBModels(): void {
@@ -259,18 +297,63 @@ export class AREngine {
   }
 
   private loadHatModels(): void {
+    // --- Procedural sombrero (GLB export is broken: 25 unit-spheres at origin) ---
+    (() => {
+      const g = this.hatMap['sombrero'];
+      const mkMat = (c: number) =>
+        new THREE.MeshStandardMaterial({ color: c, roughness: 0.78 });
+      const tan = 0xc4891a;
+      const dark = 0x1a0900;
+      // brim: bottom face at group y=0
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(1.50, 1.50, 0.07, 64), mkMat(tan));
+      brim.position.y = 0.035; brim.frustumCulled = false;
+      // lower crown
+      const crownLow = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.80, 0.80, 32), mkMat(tan));
+      crownLow.position.y = 0.47; crownLow.frustumCulled = false;
+      // dome cap
+      const crownTop = new THREE.Mesh(
+        new THREE.SphereGeometry(0.52, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.55),
+        mkMat(tan),
+      );
+      crownTop.position.y = 0.87; crownTop.frustumCulled = false;
+      // decorative band
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.70, 0.04, 8, 48), mkMat(dark));
+      band.rotation.x = Math.PI / 2; band.position.y = 0.12; band.frustumCulled = false;
+      g.add(brim, crownLow, crownTop, band);
+    })();
+
     const loader = new GLTFLoader();
     const load = (style: HatStyle, url: string): void => {
+      if (style === 'sombrero') return; // handled above
+
       loader.load(url, (gltf) => {
         const model = gltf.scene;
         model.updateWorldMatrix(true, true);
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
-        model.position.set(-center.x, -(center.y - size.y / 2), -center.z);
-        model.scale.setScalar(2.2 / Math.max(size.x, 0.001));
+
+        const s = 3.0 / Math.max(size.x, size.z, 0.001);
+
+        // Pirate-hat (and similar Y-symmetric models) have their head-opening
+        // at Y=0 (center), with brim drooping below and crown above.
+        // Use center pivot so the hat wraps the head rather than floating above it.
+        const useCenterPivot = style === 'pirate-hat' || Math.abs(center.y) < size.y * 0.12;
+        const pivotY = useCenterPivot ? -center.y * s : -(center.y - size.y / 2) * s;
+
+        model.position.set(-center.x * s, pivotY, -center.z * s);
+        model.scale.setScalar(s);
+
+        model.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            child.frustumCulled = false;
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach(m => { if (m) { m.side = THREE.DoubleSide; m.needsUpdate = true; } });
+          }
+        });
+
         this.hatMap[style].add(model);
-      }, undefined, () => {});
+      }, undefined, (err) => console.error(`[AR] Hat load error [${style}]:`, err));
     };
     for (const [style, url] of Object.entries(HAT_URLS) as [HatStyle, string][]) load(style, url);
   }
@@ -344,6 +427,30 @@ export class AREngine {
     }
   }
 
+  private loadMaskModels(): void {
+    const loader = new GLTFLoader();
+    for (const [style, url] of Object.entries(MASK_URLS) as [MaskStyle, string][]) {
+      loader.load(url, (gltf) => {
+        const model = gltf.scene;
+        model.updateWorldMatrix(true, true);
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        // Normalize: center and scale so the model is MASK_IPD_SCALE wide in group space
+        model.position.sub(center);
+        model.scale.setScalar(MASK_IPD_SCALE[style] / Math.max(size.x, 0.001));
+        model.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            child.frustumCulled = false;
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach(m => { if (m) { m.side = THREE.DoubleSide; m.needsUpdate = true; } });
+          }
+        });
+        this.maskMap[style].add(model);
+      }, undefined, (err) => console.error(`[AR] Mask load error [${style}]:`, err));
+    }
+  }
+
   private refreshOccluder(landmarks: Landmark[], W: number, H: number): void {
     const pts = FACE_OVAL.map(i => toVec3(landmarks[i], W, H));
     const center = new THREE.Vector3(); pts.forEach(p => center.add(p)); center.divideScalar(pts.length);
@@ -380,7 +487,7 @@ export class AREngine {
     }
 
     if (this.activeHat.visible) {
-      this.activeHat.position.copy(toVec3(landmarks[10], W, H)).addScaledVector(face.up, face.ipd * 0.20).addScaledVector(face.forward, face.ipd * 0.04);
+      this.activeHat.position.copy(toVec3(landmarks[10], W, H)).addScaledVector(face.up, face.ipd * 0.06).addScaledVector(face.forward, face.ipd * 0.04);
       this.activeHat.quaternion.copy(face.quat);
       this.activeHat.scale.setScalar(face.ipd);
     }
@@ -415,20 +522,42 @@ export class AREngine {
       this.neckOccluder.scale.set(jawWidth * 1.05, jawWidth, jawWidth * 0.60);
     }
 
+    if (this.activeMask.visible) {
+      this.activeMask.position
+        .copy(face.bridge)
+        .addScaledVector(face.forward, face.ipd * 0.18)
+        .addScaledVector(face.up, face.ipd * MASK_UP_OFFSET[this.activeMaskStyle]);
+      this.activeMask.quaternion.copy(face.quat);
+      this.activeMask.scale.setScalar(face.ipd);
+    }
+
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
   }
 
   clear(): void { this.renderer.setScissorTest(false); this.renderer.clear(); }
 
-  setAccessories(glasses: boolean, hat: boolean, earrings: boolean, necklace = false, tie = false): void {
+  setAccessories(glasses: boolean, hat: boolean, earrings: boolean, necklace = false, tie = false, mask = false): void {
     this.glassesEnabled = glasses; this.activeGlasses.visible = glasses;
     this.hatEnabled = hat; this.activeHat.visible = hat;
     this.earringsEnabled = earrings; this.activeEarringL.visible = earrings; this.activeEarringR.visible = earrings;
     this.necklaceEnabled = necklace; this.activeNecklace.visible = necklace;
     this.tieEnabled = tie; this.activeTie.visible = tie;
+    this.maskEnabled = mask; this.activeMask.visible = mask;
     this.occluder.visible = glasses || hat || earrings || necklace || tie;
     this.neckOccluder.visible = necklace || tie;
+  }
+
+  setMaskStyle(style: MaskStyle): void {
+    this.activeMask.visible = false;
+    this.activeMask = this.maskMap[style];
+    this.activeMaskStyle = style;
+    this.activeMask.visible = this.maskEnabled;
+  }
+
+  setMaskEnabled(enabled: boolean): void {
+    this.maskEnabled = enabled;
+    this.activeMask.visible = enabled;
   }
 
   setGlassesStyle(style: GlassesStyle): void { this.activeGlasses.visible = false; this.activeGlasses = this.glassesMap[style]; this.activeGlasses.visible = this.glassesEnabled; }
@@ -441,11 +570,8 @@ export class AREngine {
     this.scene.traverse(obj => {
       if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose();
-        if (Array.isArray(obj.material)) {
-          obj.material.forEach(m => m.dispose());
-        } else if (obj.material) {
-          obj.material.dispose();
-        }
+        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        else if (obj.material) obj.material.dispose();
       }
     });
     this.renderer.dispose();
