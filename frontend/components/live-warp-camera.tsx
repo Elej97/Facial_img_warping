@@ -4,7 +4,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 
 import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
-import type { EarringStyle, GlassesStyle, HatStyle, NecklaceStyle, TieStyle } from './ar-engine';
+import type { EarringStyle, GlassesStyle, HatStyle, MaskStyle, NecklaceStyle, TieStyle } from './ar-engine';
 import { AREngine } from './ar-engine';
 
 export type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
@@ -58,6 +58,78 @@ const EFFECT_SPREAD: Record<EffectId, number> = {
   slim: 1,
   brow: 0.18,
   lip: 0.45,
+};
+
+export type EmotionId = 'angry' | 'sad' | 'surprised' | 'happy' | 'disgusted';
+
+type EmotionAnchor = { idx: number; dx: number; dy: number; effect: EffectId };
+
+const EMOTION_PRESETS: Record<EmotionId, {
+  label: string; icon: string; tintColor: string; tintAlpha: number; anchors: EmotionAnchor[];
+}> = {
+  angry: {
+    label: 'Kızgın', icon: '😠', tintColor: '220,40,40', tintAlpha: 0.00,
+    anchors: [
+      { idx: 107, dx:  0.018, dy:  0.044, effect: 'slim' },
+      { idx: 336, dx: -0.018, dy:  0.044, effect: 'slim' },
+      { idx: 70,  dx:  0,     dy:  0.022, effect: 'slim' },
+      { idx: 300, dx:  0,     dy:  0.022, effect: 'slim' },
+      { idx: 61,  dx:  0.006, dy:  0.028, effect: 'smile' },
+      { idx: 291, dx: -0.006, dy:  0.028, effect: 'smile' },
+    ],
+  },
+  sad: {
+    label: 'Üzgün', icon: '😢', tintColor: '40,80,220', tintAlpha: 0.00,
+    anchors: [
+      { idx: 107, dx:  0,      dy: -0.038, effect: 'slim' },
+      { idx: 336, dx:  0,      dy: -0.038, effect: 'slim' },
+      { idx: 70,  dx:  0,      dy:  0.014, effect: 'slim' },
+      { idx: 300, dx:  0,      dy:  0.014, effect: 'slim' },
+      { idx: 61,  dx:  0.010,  dy:  0.034, effect: 'smile' },
+      { idx: 291, dx: -0.010,  dy:  0.034, effect: 'smile' },
+      { idx: 17,  dx:  0,      dy:  0.018, effect: 'smile' },
+    ],
+  },
+  surprised: {
+    label: 'Şaşkın', icon: '😲', tintColor: '255,200,20', tintAlpha: 0.00,
+    anchors: [
+      { idx: 70,  dx: 0, dy: -0.046, effect: 'brow' },
+      { idx: 63,  dx: 0, dy: -0.038, effect: 'brow' },
+      { idx: 105, dx: 0, dy: -0.036, effect: 'brow' },
+      { idx: 107, dx: 0, dy: -0.032, effect: 'brow' },
+      { idx: 300, dx: 0, dy: -0.046, effect: 'brow' },
+      { idx: 293, dx: 0, dy: -0.038, effect: 'brow' },
+      { idx: 334, dx: 0, dy: -0.036, effect: 'brow' },
+      { idx: 336, dx: 0, dy: -0.032, effect: 'brow' },
+      { idx: 13,  dx: 0, dy: -0.022, effect: 'smile' },
+      { idx: 14,  dx: 0, dy:  0.038, effect: 'smile' },
+      { idx: 17,  dx: 0, dy:  0.026, effect: 'smile' },
+    ],
+  },
+  happy: {
+    label: 'Mutlu', icon: '😊', tintColor: '255,200,0', tintAlpha: 0.00,
+    anchors: [
+      { idx: 61,  dx: -0.026, dy: -0.052, effect: 'smile' },
+      { idx: 291, dx:  0.026, dy: -0.052, effect: 'smile' },
+      { idx: 17,  dx:  0,     dy:  0.020, effect: 'smile' },
+      { idx: 123, dx:  0,     dy: -0.014, effect: 'slim' },
+      { idx: 352, dx:  0,     dy: -0.014, effect: 'slim' },
+      { idx: 145, dx:  0,     dy: -0.010, effect: 'slim' },
+      { idx: 374, dx:  0,     dy: -0.010, effect: 'slim' },
+    ],
+  },
+  disgusted: {
+    label: 'İğrenmiş', icon: '🤢', tintColor: '40,160,50', tintAlpha: 0.00,
+    anchors: [
+      { idx: 0,   dx:  0,      dy: -0.026, effect: 'smile' },
+      { idx: 12,  dx:  0,      dy: -0.020, effect: 'smile' },
+      { idx: 61,  dx: -0.016,  dy: -0.024, effect: 'smile' },
+      { idx: 291, dx:  0.006,  dy:  0.010, effect: 'smile' },
+      { idx: 70,  dx:  0,      dy: -0.024, effect: 'brow' },
+      { idx: 63,  dx:  0,      dy: -0.020, effect: 'brow' },
+      { idx: 105, dx:  0,      dy: -0.016, effect: 'brow' },
+    ],
+  },
 };
 
 const EFFECT_META: Record<EffectId, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
@@ -233,6 +305,13 @@ const NECKLACE_VARIANTS = [
 const TIE_VARIANTS = [
   { key: 'necktie' as TieStyle, label: 'Kravat', color: '#1a1a1a' },
   { key: 'bowtie' as TieStyle,  label: 'Papyon', color: '#882222' },
+];
+
+const MASK_VARIANTS = [
+  { key: 'clown-mask' as MaskStyle, label: 'Palyaço',  color: '#cc2222' },
+  { key: 'fox-head'   as MaskStyle, label: 'Tilki',    color: '#cc6600' },
+  { key: 'anon-mask'  as MaskStyle, label: 'Anonim',   color: '#222244' },
+  { key: 'gas-mask'   as MaskStyle, label: 'Gaz Mask', color: '#334433' },
 ];
 
 const GRID_N = 18;
@@ -705,6 +784,295 @@ function drawDeagingOverlay(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], 
   ctx.restore();
 }
 
+function drawEmotionOverlay(
+  ctx: CanvasRenderingContext2D,
+  lm: LandmarkPoint[],
+  W: number,
+  H: number,
+  emotion: EmotionId,
+  frame: number,
+) {
+  if (emotion === 'angry') drawAngryEffects(ctx, lm, W, H, frame);
+  else if (emotion === 'sad') drawSadEffects(ctx, lm, W, H, frame);
+  else if (emotion === 'surprised') drawSurprisedEffects(ctx, lm, W, H, frame);
+  else if (emotion === 'happy') drawHappyEffects(ctx, lm, W, H, frame);
+  else if (emotion === 'disgusted') drawDisgustedEffects(ctx, lm, W, H, frame);
+}
+
+// ---- ANGRY: skin reddening on face + subtle brow shadow ----
+function drawAngryEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, _frame: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+  const cx = ((face.minX + face.maxX) / 2) * W;
+  const cy = ((face.minY + face.maxY) / 2) * H;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Red skin flush across cheeks and forehead
+  ctx.globalCompositeOperation = 'multiply';
+  const flush = ctx.createRadialGradient(cx, cy * 0.94, 0, cx, cy * 0.94, Math.max(faceW, faceH) * 0.58);
+  flush.addColorStop(0,   'rgba(210,55,55,0.32)');
+  flush.addColorStop(0.55,'rgba(195,45,45,0.16)');
+  flush.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = flush;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy * 0.94, faceW * 0.54, faceH * 0.56, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ---- SAD: streaking tear lines down the cheeks + under-eye tint ----
+function drawSadEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, frame: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Continuous tear streak lines from inner-lower eye corners downward
+  for (const [startIdx, endIdx] of [[159, 145], [386, 374]] as [number, number][]) {
+    const start = lm[startIdx];
+    const end = lm[endIdx];
+    if (!start || !end) continue;
+    const ox = ((start.x + end.x) / 2) * W;
+    const oy = end.y * H;
+    const tearLen = faceH * (0.30 + 0.06 * Math.sin(frame * 0.025 + startIdx));
+    const grad = ctx.createLinearGradient(ox, oy, ox + faceW * 0.012, oy + tearLen);
+    grad.addColorStop(0,   'rgba(140,175,255,0.80)');
+    grad.addColorStop(0.55,'rgba(120,160,255,0.50)');
+    grad.addColorStop(1,   'rgba(100,145,255,0)');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = faceW * 0.014;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ox, oy);
+    ctx.quadraticCurveTo(ox + faceW * 0.022, oy + tearLen * 0.45, ox + faceW * 0.014, oy + tearLen);
+    ctx.stroke();
+
+    // Small glistening drop at the tip
+    const dropPhase = (frame * 0.020 + startIdx * 0.1) % 1;
+    const dropY = oy + tearLen * (0.85 + dropPhase * 0.15);
+    const r = faceW * 0.016;
+    ctx.globalAlpha = Math.min(1, (1 - dropPhase) * 2.5) * 0.82;
+    ctx.fillStyle = 'rgba(160,195,255,0.88)';
+    ctx.beginPath();
+    ctx.arc(ox + faceW * 0.013, dropY, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Subtle bluish-red under-eye puffiness
+  ctx.globalCompositeOperation = 'multiply';
+  for (const idx of [145, 374]) {
+    const ep = lm[idx];
+    if (!ep) continue;
+    const ex = ep.x * W;
+    const ey = (ep.y + 0.014) * H;
+    const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, faceW * 0.10);
+    g.addColorStop(0,   'rgba(180,90,90,0.20)');
+    g.addColorStop(1,   'rgba(180,90,90,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, faceW * 0.10, faceH * 0.042, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ---- SURPRISED: eye shine + small sparkles near eyes ----
+function drawSurprisedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, frame: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+  const cx = ((face.minX + face.maxX) / 2) * W;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Bright catchlight glow on each iris
+  ctx.globalCompositeOperation = 'screen';
+  for (const irisIdx of [468, 473]) {
+    const ep = lm[irisIdx] ?? lm[irisIdx === 468 ? 159 : 386];
+    if (!ep) continue;
+    const ex = ep.x * W;
+    const ey = ep.y * H;
+    const pulse = 0.7 + 0.3 * Math.abs(Math.sin(frame * 0.08 + irisIdx));
+    const g = ctx.createRadialGradient(ex - faceW * 0.015, ey - faceH * 0.012, 0, ex, ey, faceW * 0.055);
+    g.addColorStop(0,   `rgba(255,255,255,${0.65 * pulse})`);
+    g.addColorStop(0.35,`rgba(255,255,220,${0.28 * pulse})`);
+    g.addColorStop(1,   'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, faceW * 0.055, faceW * 0.055, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Small star sparkles close to the eyes (not orbiting far away)
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(255,240,100,0.90)';
+  const sparkPositions = [
+    { baseIdx: 70,  dx: -0.06, dy: -0.08 },
+    { baseIdx: 63,  dx:  0.00, dy: -0.11 },
+    { baseIdx: 300, dx:  0.06, dy: -0.08 },
+    { baseIdx: 293, dx:  0.00, dy: -0.11 },
+  ];
+  for (const sp of sparkPositions) {
+    const base = lm[sp.baseIdx];
+    if (!base) continue;
+    const px = base.x * W + sp.dx * faceW;
+    const py = base.y * H + sp.dy * faceH;
+    const pulse = 0.45 + 0.55 * Math.abs(Math.sin(frame * 0.10 + sp.baseIdx * 0.3));
+    const size = faceW * 0.020 * pulse;
+    ctx.globalAlpha = 0.4 + 0.6 * pulse;
+    drawStar4(ctx, px, py, size * 0.38, size);
+  }
+
+  // Subtle bright glow on forehead (surprise flush)
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = 1;
+  const glow = ctx.createRadialGradient(cx, face.minY * H + faceH * 0.14, 0, cx, face.minY * H + faceH * 0.14, faceW * 0.38);
+  glow.addColorStop(0,   'rgba(255,250,200,0.16)');
+  glow.addColorStop(1,   'rgba(255,250,200,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.ellipse(cx, face.minY * H + faceH * 0.14, faceW * 0.42, faceH * 0.16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ---- HAPPY: rosy cheeks + small hearts rising from cheek level ----
+function drawHappyEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, frame: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+  const cx = ((face.minX + face.maxX) / 2) * W;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Rosy blush circles on cheeks (anchored to cheek landmarks)
+  for (const [rx, ry] of [
+    [face.minX + face.width * 0.18, face.minY + face.height * 0.58],
+    [face.minX + face.width * 0.82, face.minY + face.height * 0.58],
+  ] as [number, number][]) {
+    const px = rx * W;
+    const py = ry * H;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, faceW * 0.15);
+    g.addColorStop(0,   'rgba(255,90,105,0.40)');
+    g.addColorStop(0.55,'rgba(255,110,115,0.16)');
+    g.addColorStop(1,   'rgba(255,90,105,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(px, py, faceW * 0.16, faceH * 0.092, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Hearts rise from cheek level up to just above the head (clamped to face area)
+  ctx.fillStyle = 'rgba(255,70,125,0.84)';
+  const cheekY = (face.minY + face.height * 0.60) * H;  // starting Y = cheek level
+  const riseMax = faceH * 0.75;                          // max rise = 75% of face height
+  for (const [oxF, spd, sizeF] of [
+    [-0.26, 0.020, 0.88],
+    [ 0.26, 0.016, 0.70],
+    [ 0.02, 0.028, 0.52],
+  ] as [number, number, number][]) {
+    const phase = (frame * spd) % 1;
+    const hx = cx + oxF * faceW + Math.sin(frame * 0.05 + spd * 18) * faceW * 0.035;
+    const hy = cheekY - phase * riseMax;
+    ctx.globalAlpha = Math.min(1, (1 - phase) * 2.2) * 0.84;
+    drawHeart2(ctx, hx, hy, faceW * 0.030 * sizeF);
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ---- DISGUSTED: green skin tint on face + sweat drops on forehead ----
+function drawDisgustedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, frame: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+  const cx = ((face.minX + face.maxX) / 2) * W;
+  const cy = ((face.minY + face.maxY) / 2) * H;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Green-tinted skin gradient on face only
+  ctx.globalCompositeOperation = 'multiply';
+  const greenFlush = ctx.createRadialGradient(cx, cy * 0.96, 0, cx, cy * 0.96, Math.max(faceW, faceH) * 0.56);
+  greenFlush.addColorStop(0,   'rgba(100,200,90,0.28)');
+  greenFlush.addColorStop(0.55,'rgba(90,185,80,0.14)');
+  greenFlush.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = greenFlush;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy * 0.96, faceW * 0.52, faceH * 0.56, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Sweat drops on forehead — anchored to landmark 10 (top forehead)
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(90,210,100,0.88)';
+  const forehead = lm[10];
+  if (forehead) {
+    for (const [oxF, spd, phase0] of [
+      [-0.16, 0.018, 0.0],
+      [ 0.06, 0.024, 0.3],
+      [ 0.24, 0.014, 0.6],
+    ] as [number, number, number][]) {
+      const phase = ((frame * spd + phase0)) % 1;
+      const sx = forehead.x * W + oxF * faceW;
+      // Drop starts slightly below forehead landmark and falls down
+      const sy = (forehead.y + 0.018) * H + phase * faceH * 0.18;
+      const alpha = Math.min(1, (1 - phase) * 2.4) * 0.82;
+      const r = faceW * (0.011 + phase * 0.007);
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+      if (phase > 0.08) {
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - r);
+        ctx.lineTo(sx - r * 0.50, sy - r * 1.85);
+        ctx.lineTo(sx + r * 0.50, sy - r * 1.85);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawStar4(ctx: CanvasRenderingContext2D, cx: number, cy: number, inner: number, outer: number) {
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI) / 4 - Math.PI / 2;
+    const r = i % 2 === 0 ? outer : inner;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawHeart2(ctx: CanvasRenderingContext2D, cx: number, cy: number, s: number) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + s * 0.3);
+  ctx.bezierCurveTo(cx - s * 1.5, cy - s * 0.8, cx - s * 2.2, cy + s * 0.8, cx, cy + s * 2.2);
+  ctx.bezierCurveTo(cx + s * 2.2, cy + s * 0.8, cx + s * 1.5, cy - s * 0.8, cx, cy + s * 0.3);
+  ctx.fill();
+}
+
 type LiveWarpCameraProps = {
   onCapture?: (dataUrl: string, width: number, height: number) => void;
   isDark?: boolean;
@@ -755,16 +1123,21 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     lip: 0,
   });
   const [splitScreen, setSplitScreen] = useState(true);
-  const [activeCategory, setActiveCategory] = useState<'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie' | null>(null);
-  const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false, necklace: false, tie: false });
-  const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false, necklace: false, tie: false });
+  const [activeCategory, setActiveCategory] = useState<'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie' | 'mask' | null>(null);
+  const [accessories, setAccessories] = useState({ glasses: false, hat: false, earrings: false, necklace: false, tie: false, mask: false });
+  const accessoriesRef = useRef({ glasses: false, hat: false, earrings: false, necklace: false, tie: false, mask: false });
   const [glassesStyle, setGlassesStyle] = useState<GlassesStyle>('ski');
   const [hatStyle, setHatStyle] = useState<HatStyle>('top-hat');
   const [earringStyle, setEarringStyle] = useState<EarringStyle>('hoop-earrings');
   const [necklaceStyle, setNecklaceStyle] = useState<NecklaceStyle>('necklace');
   const [tieStyle, setTieStyle] = useState<TieStyle>('necktie');
+  const [maskStyle, setMaskStyle] = useState<MaskStyle>('anon-mask');
 
-  const handleAccessoryPress = (key: 'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie') => {
+  const [activeEmotion, setActiveEmotion] = useState<EmotionId | null>(null);
+  const activeEmotionRef = useRef<EmotionId | null>(null);
+  const emotionFrameRef = useRef(0);
+
+  const handleAccessoryPress = (key: 'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie' | 'mask') => {
     if (accessories[key]) {
       if (activeCategory === key) {
         // Active and focused -> Turn off completely
@@ -801,6 +1174,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     setTieStyle(style);
     arEngineRef.current?.setTieStyle(style);
   };
+  const changeMaskStyle = (style: MaskStyle) => {
+    setMaskStyle(style);
+    arEngineRef.current?.setMaskStyle(style);
+  };
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
   const proLabEnabledRef = useRef(proLabEnabled);
@@ -822,7 +1199,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
 
   useEffect(() => {
     accessoriesRef.current = accessories;
-    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings, accessories.necklace, accessories.tie);
+    arEngineRef.current?.setAccessories(accessories.glasses, accessories.hat, accessories.earrings, accessories.necklace, accessories.tie, accessories.mask);
   }, [accessories]);
 
   useEffect(() => {
@@ -837,7 +1214,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     if (arEngineRef.current || !arCanvasRef.current) return;
     const engine = new AREngine(arCanvasRef.current as unknown as HTMLCanvasElement);
     const acc = accessoriesRef.current;
-    engine.setAccessories(acc.glasses, acc.hat, acc.earrings, acc.necklace, acc.tie);
+    engine.setAccessories(acc.glasses, acc.hat, acc.earrings, acc.necklace, acc.tie, acc.mask);
     arEngineRef.current = engine;
   };
 
@@ -1067,6 +1444,23 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       }
     });
 
+    // Emotion filter anchors (always full strength)
+    const activeEmot = activeEmotionRef.current;
+    if (activeEmot) {
+      for (const anchor of EMOTION_PRESETS[activeEmot].anchors) {
+        const lp = lm[anchor.idx];
+        if (!lp) continue;
+        controls.push({
+          effect: anchor.effect,
+          sx: lp.x,
+          sy: lp.y,
+          dxn: anchor.dx,
+          dyn: anchor.dy,
+          spread: EFFECT_SPREAD[anchor.effect],
+        });
+      }
+    }
+
     if (controls.length > 0 && !agingMode) {
       let minX = 1, maxX = 0, minY = 1, maxY = 0;
       for (const p of lm) {
@@ -1159,6 +1553,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
         }
       });
     }
+
+    // Emotion canvas overlay (tint + animated elements)
+    if (activeEmotionRef.current) {
+      drawEmotionOverlay(ctx, lm, W, H, activeEmotionRef.current, emotionFrameRef.current);
+    }
+    emotionFrameRef.current += 1;
 
     if (showLandmarksRef.current) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1443,6 +1843,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
               {([
                 { key: 'glasses',  label: 'Gözlük', icon: '👓' },
                 { key: 'hat',      label: 'Şapka',  icon: '🎩' },
+                { key: 'mask',     label: 'Maske',  icon: '🎭' },
                 { key: 'earrings', label: 'Küpe',   icon: '💎' },
                 { key: 'necklace', label: 'Kolye',  icon: '📿' },
                 { key: 'tie',      label: 'Kravat', icon: '👔' },
@@ -1472,6 +1873,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                   <Text style={[styles.variantsTitle, { color: text }]}>
                     {activeCategory === 'glasses' ? '👓 Gözlük Stilleri' :
                      activeCategory === 'hat' ? '🎩 Şapka Stilleri' :
+                     activeCategory === 'mask' ? '🎭 Maske Stilleri' :
                      activeCategory === 'earrings' ? '💎 Küpe Stilleri' :
                      activeCategory === 'necklace' ? '📿 Kolye Stilleri' :
                      '👔 Kravat & Papyon Stilleri'}
@@ -1500,6 +1902,16 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                         borderColor: hatStyle === key ? accent : panelBorder }]}>
                       <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
                       <Text style={[styles.variantLabel, { color: hatStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                    </Pressable>
+                  ))}
+
+                  {activeCategory === 'mask' && MASK_VARIANTS.map(({ key, label, color }) => (
+                    <Pressable key={key} onPress={() => changeMaskStyle(key)}
+                      style={[styles.variantButton, {
+                        backgroundColor: maskStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: maskStyle === key ? accent : panelBorder }]}>
+                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
+                      <Text style={[styles.variantLabel, { color: maskStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
                     </Pressable>
                   ))}
 
@@ -1610,6 +2022,36 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                   <Text style={[styles.manualText, { color: text }]}>{EFFECT_META[id].label}</Text>
                 </Pressable>
               ))}
+            </View>
+
+            <Text style={[styles.sectionLabel, { color: muted }]}>DUYGU FİLTRELERİ</Text>
+            <View style={styles.emotionGrid}>
+              {(Object.keys(EMOTION_PRESETS) as EmotionId[]).map((id) => {
+                const preset = EMOTION_PRESETS[id];
+                const active = activeEmotion === id;
+                return (
+                  <Pressable
+                    key={id}
+                    onPress={() => {
+                      const next = active ? null : id;
+                      setActiveEmotion(next);
+                      activeEmotionRef.current = next;
+                    }}
+                    style={[
+                      styles.emotionButton,
+                      {
+                        backgroundColor: active
+                          ? 'rgba(160,32,240,0.30)'
+                          : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        borderColor: active ? accent : panelBorder,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.emotionIcon}>{preset.icon}</Text>
+                    <Text style={[styles.emotionLabel, { color: active ? '#fff' : text }]}>{preset.label}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
 
             <View style={styles.sectionRow}>
@@ -2174,5 +2616,27 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  emotionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  emotionButton: {
+    minWidth: 76,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    gap: 4,
+  },
+  emotionIcon: {
+    fontSize: 22,
+  },
+  emotionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
   },
 });
