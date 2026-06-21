@@ -76,7 +76,8 @@ from modules.pro_warping import (
     smile_enhancement_pro,
 )
 from modules.reporting import build_report_payload, generate_csv_bytes, generate_csv_report, generate_pdf_bytes, generate_pdf_report
-from modules.warping import raise_eyebrows, simulate_smile, slim_face, widen_lips
+from modules.warping import raise_eyebrows, simulate_smile, slim_face, widen_lips, enlarge_eyes, sharpen_jaw, resize_nose
+from modules.landmark import detect_landmarks_3d
 from utils.image_utils import b64_to_numpy, bytes_to_numpy, numpy_to_b64
 
 
@@ -382,19 +383,23 @@ async def warp(
         file_bytes = await image.read()
         img = bytes_to_numpy(file_bytes)
 
-        lms = detect_landmarks(img)
-        if lms is None:
-            return {"error": "Face not detected or model error", "details": "No face detected."}
-
         ops = {
             "smile": simulate_smile,
             "raise_eyebrows": raise_eyebrows,
             "widen_lips": widen_lips,
             "slim_face": slim_face,
+            "enlarge_eyes": enlarge_eyes,
+            "sharpen_jaw": sharpen_jaw,
+            "resize_nose": resize_nose,
         }
 
         if operation not in ops:
             return {"error": "Face not detected or model error", "details": f"Unknown operation '{operation}'. Valid: {list(ops.keys())}"}
+
+        lms = detect_landmarks(img)
+
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
 
         # Operation-specific caps reduce common artifacts at high intensity values.
         intensity_caps = {
@@ -402,6 +407,9 @@ async def warp(
             "raise_eyebrows": 0.72,
             "widen_lips": 0.78,
             "slim_face": 0.68,
+            "enlarge_eyes": 1.0,
+            "sharpen_jaw": 1.0,
+            "resize_nose": 1.0,
         }
         applied_intensity = float(min(requested_intensity, intensity_caps.get(operation, 1.0)))
 
@@ -456,6 +464,9 @@ async def warp_pro(
             "slim_face": lambda im, lm, inten: slim_face_pro(im, lm, inten, smooth=rbf_smooth),
             "smile_enhancement": lambda im, lm, inten: smile_enhancement_pro(im, lm, inten, smooth=rbf_smooth),
             "brow_lift": lambda im, lm, inten: brow_lift_pro(im, lm, inten, smooth=rbf_smooth),
+            "enlarge_eyes": lambda im, lm, inten: enlarge_eyes(im, lm, inten),
+            "sharpen_jaw": lambda im, lm, inten: sharpen_jaw(im, lm, inten),
+            "resize_nose": lambda im, lm, inten: resize_nose(im, lm, inten),
         }
         if operation not in ops:
             return {

@@ -88,6 +88,29 @@ def detect_landmarks_raw(image_np: np.ndarray) -> list[dict] | None:
     return [{"x": lm.x, "y": lm.y, "z": lm.z} for lm in result.face_landmarks[0]]
 
 
+def detect_landmarks_3d(image_np: np.ndarray) -> list[tuple] | None:
+    """Detect 468 landmarks and return (x, y, z).
+    z is the relative depth returned by MediaPipe.
+    """
+    h, w = image_np.shape[:2]
+    target_dim = 1280
+    if max(h, w) > target_dim:
+        scale = target_dim / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        proc_img = cv2.resize(image_np, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    else:
+        proc_img = image_np
+
+    rgb = cv2.cvtColor(proc_img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    result = _landmarker.detect(mp_image)
+
+    if not result.face_landmarks:
+        return None
+
+    return [(int(lm.x * w), int(lm.y * h), float(lm.z * w)) for lm in result.face_landmarks[0]]
+
+
 def _build_blendshape_landmarker():
     model_path = get_model_path('face_landmarker')
     options = mp_vision.FaceLandmarkerOptions(

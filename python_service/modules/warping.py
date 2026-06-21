@@ -467,3 +467,193 @@ def slim_face(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> 
     dst = _clip_points(dst, w, h)
     warped = apply_delaunay_warp(image_np, landmarks, dst)
     return _blend_output(image_np, warped, intensity_eff, min_alpha=0.48, max_alpha=0.86)
+
+
+def enlarge_eyes(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
+    h, w = image_np.shape[:2]
+    intensity_eff = float(np.clip(intensity, 0.0, 1.0))
+    key = get_key_landmark_indices()
+    flow_x = np.zeros((h, w), dtype=np.float32)
+    flow_y = np.zeros((h, w), dtype=np.float32)
+
+    # We map the intensity range [0, 1] to bulge/pinch strength k:
+    # 0.35 is neutral (original size, no warp)
+    # > 0.35: bulge (enlarge) -> k > 0
+    # < 0.35: pinch (shrink) -> k < 0
+    neutral_val = 0.35
+    if intensity_eff >= neutral_val:
+        # bulge up to +0.65
+        k = 0.65 * (intensity_eff - neutral_val) / (1.0 - neutral_val)
+    else:
+        # pinch up to -0.45, with a taper factor to avoid jumps near 0%
+        raw_pinch = -0.45 * (neutral_val - intensity_eff) / neutral_val
+        taper = float(np.clip(intensity_eff * 5.0, 0.0, 1.0))
+        k = raw_pinch * taper
+
+    for eye_key in ["left_eye", "right_eye"]:
+        # Get coordinates for this eye
+        eye_ids = key[eye_key]
+        eye_pts = [landmarks[i] for i in eye_ids if i < len(landmarks)]
+        if len(eye_pts) < 4:
+            continue
+
+        pts = np.array(eye_pts, dtype=np.float32)
+        cx = float(np.mean(pts[:, 0]))
+        cy = float(np.mean(pts[:, 1]))
+
+        # Calculate horizontal width of the eye
+        if eye_key == "left_eye":
+            # Distance between landmark 33 (outer corner) and 133 (inner corner)
+            p1 = np.array(landmarks[33]) if 33 < len(landmarks) else pts[0]
+            p2 = np.array(landmarks[133]) if 133 < len(landmarks) else pts[len(pts)//2]
+        else:
+            # Distance between landmark 362 (inner corner) and 263 (outer corner)
+            p1 = np.array(landmarks[362]) if 362 < len(landmarks) else pts[0]
+            p2 = np.array(landmarks[263]) if 263 < len(landmarks) else pts[len(pts)//2]
+        
+        eye_width = float(np.linalg.norm(p1 - p2))
+        
+        # Radii of influence: horizontal and vertical (restricted to prevent eyebrow/nose warping)
+        Rx = eye_width * 0.90
+        Ry = Rx * 0.75
+
+        # Bounding box around the eye center
+        y1 = max(0, int(cy - Ry))
+        y2 = min(h, int(cy + Ry + 1))
+        x1 = max(0, int(cx - Rx))
+        x2 = min(w, int(cx + Rx + 1))
+
+        if y2 <= y1 or x2 <= x1:
+            continue
+
+        # Get local coordinates
+        yy, xx = np.mgrid[y1:y2, x1:x2].astype(np.float32)
+        dx = xx - cx
+        dy = yy - cy
+
+        # Elliptical distance metric
+        u = np.sqrt((dx / Rx) ** 2 + (dy / Ry) ** 2)
+        
+        # Mask inside the ellipse
+        mask = u < 1.0
+        
+        # Displacement scale factor (smooth transition at boundary where u=1)
+        displacement_weight = k * (1.0 - u) ** 2
+        
+        # Apply the displacement inside the ellipse region
+        # Uniform scaling preserves pupil/iris circularity
+        flow_x[y1:y2, x1:x2][mask] += (dx * displacement_weight)[mask]
+        flow_y[y1:y2, x1:x2][mask] += (dy * displacement_weight)[mask]
+
+    # Warp the image. No global blend is applied to prevent ghosting/blurriness.
+    warped = _apply_flow_warp(image_np, flow_x, flow_y)
+    return warped
+
+
+def resize_nose(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
+    h, w = image_np.shape[:2]
+    intensity_eff = float(np.clip(intensity, 0.0, 1.0))
+    flow_x = np.zeros((h, w), dtype=np.float32)
+    flow_y = np.zeros((h, w), dtype=np.float32)
+
+    # We map the intensity range [0, 1] to bulge/pinch strength k:
+    # 0.35 is neutral (original size, no warp)
+    # > 0.35: bulge (enlarge) -> k > 0
+    # < 0.35: pinch (shrink) -> k < 0
+    neutral_val = 0.35
+    if intensity_eff >= neutral_val:
+        # bulge (nose widening/enlargement) up to +0.45
+        k = 0.45 * (intensity_eff - neutral_val) / (1.0 - neutral_val)
+    else:
+        # pinch (nose slimming) up to -0.35
+        raw_pinch = -0.35 * (neutral_val - intensity_eff) / neutral_val
+        taper = float(np.clip(intensity_eff * 5.0, 0.0, 1.0))
+        k = raw_pinch * taper
+
+    print(f"[DEBUG NOSE] w={w}, h={h}, intensity={intensity_eff}, k={k}, len(lms)={len(landmarks)}")
+
+    if 1 < len(landmarks) and 2 < len(landmarks):
+        # Center of the nose tip/bottom
+        p_tip = np.array(landmarks[1], dtype=np.float32)
+        p_bottom = np.array(landmarks[2], dtype=np.float32)
+        cx = float((p_tip[0] + p_bottom[0]) / 2.0)
+        cy = float((p_tip[1] + p_bottom[1]) / 2.0)
+        
+        # We estimate nose width based on eye corners if available
+        if 133 < len(landmarks) and 362 < len(landmarks):
+            p_left_eye = np.array(landmarks[133], dtype=np.float32)
+            p_right_eye = np.array(landmarks[362], dtype=np.float32)
+            eye_distance = float(np.linalg.norm(p_left_eye - p_right_eye))
+        else:
+            eye_distance = float(min(h, w)) * 0.15
+            
+        # Radii of influence: horizontal and vertical (restricted to prevent eyebrow/nose warping)
+        Rx = eye_distance * 0.65
+        Ry = Rx * 1.25
+
+        print(f"[DEBUG NOSE] cx={cx}, cy={cy}, Rx={Rx}, Ry={Ry}, eye_distance={eye_distance}")
+
+        # Bounding box around the nose center
+        y1 = max(0, int(cy - Ry))
+        y2 = min(h, int(cy + Ry + 1))
+        x1 = max(0, int(cx - Rx))
+        x2 = min(w, int(cx + Rx + 1))
+
+        print(f"[DEBUG NOSE] bbox: y1={y1}, y2={y2}, x1={x1}, x2={x2}")
+
+        if y2 > y1 and x2 > x1:
+            # Get local coordinates
+            yy, xx = np.mgrid[y1:y2, x1:x2].astype(np.float32)
+            dx = xx - cx
+            dy = yy - cy
+
+            # Elliptical distance metric
+            u = np.sqrt((dx / Rx) ** 2 + (dy / Ry) ** 2)
+            
+            # Mask inside the ellipse
+            mask = u < 1.0
+            
+            # Displacement scale factor (smooth transition at boundary where u=1)
+            displacement_weight = k * (1.0 - u) ** 2
+            
+            print(f"[DEBUG NOSE] mask points inside ellipse count={np.sum(mask)}")
+
+            # Apply the displacement inside the ellipse region
+            flow_x[y1:y2, x1:x2][mask] += (dx * displacement_weight)[mask]
+            flow_y[y1:y2, x1:x2][mask] += (dy * displacement_weight)[mask]
+
+    # Warp the image. No global blend is applied to prevent ghosting/blurriness.
+    warped = _apply_flow_warp(image_np, flow_x, flow_y)
+    return warped
+
+
+def sharpen_jaw(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
+    h, w = image_np.shape[:2]
+    intensity_eff = float(np.clip(intensity, 0.0, 1.0))
+    scale = float(min(h, w))
+    
+    dst = list(landmarks)
+    nose_tip = landmarks[1] if 1 < len(landmarks) else (w//2, h//2)
+    
+    jaw_left = [132, 58, 172, 136, 150, 149, 176, 148]
+    jaw_right = [361, 288, 397, 365, 379, 378, 400, 377]
+    chin = [152]
+    
+    inward = scale * 0.035 * intensity_eff
+    upward = scale * 0.025 * intensity_eff
+    
+    for i in jaw_left + jaw_right + chin:
+        if i < len(dst):
+            x, y = dst[i][:2]
+            dx = nose_tip[0] - x
+            sign_x = np.sign(dx)
+            nx = int(x + sign_x * inward)
+            ny = int(y - upward)
+            if i in chin:
+                nx = int(x)
+                ny = int(y - upward * 1.5)
+            dst[i] = (nx, ny) + tuple(dst[i][2:])
+            
+    warped = apply_delaunay_warp(image_np, landmarks, dst)
+    return warped
+
