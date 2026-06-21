@@ -329,7 +329,8 @@ def apply_sam_aging(
     target_age: float = 65.0,
     intensity: float = 1.0,
     detail_amount: float = 0.9,
-    texture_amount: float = 0.5,
+    texture_amount: float = 0.0,  # disabled by default: injecting the ORIGINAL's high-freq onto
+                                  # the (geometry-shifted) aged face ghosts eyes/nose on some images
 ) -> np.ndarray:
     import torch
     import torchvision.transforms as T
