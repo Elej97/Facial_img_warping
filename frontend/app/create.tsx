@@ -22,7 +22,20 @@ import {
     useWindowDimensions
 } from 'react-native';
 
-import LiveWarpCamera from '@/components/live-warp-camera';
+import LiveWarpCamera, {
+  GLASSES_VARIANTS,
+  HAT_VARIANTS,
+  EARRING_VARIANTS,
+  NECKLACE_VARIANTS,
+  TIE_VARIANTS,
+  MASK_VARIANTS
+} from '@/components/live-warp-camera';
+import { AREngine, GLB_URLS, HAT_URLS, EARRING_URLS, NECKLACE_URLS, TIE_URLS, MASK_URLS } from '@/components/ar-engine';
+import type { GlassesStyle, HatStyle, EarringStyle, NecklaceStyle, TieStyle, MaskStyle } from '@/components/ar-engine';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { STUDIO, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -297,6 +310,126 @@ const clampCropBox = (box: CropBox, stage: StageLayout, imageSize: { width: numb
   return { x, y, width: cropWidth, height: cropHeight };
 };
 
+let sharedRenderer: THREE.WebGLRenderer | null = null;
+let sharedCanvas: HTMLCanvasElement | null = null;
+
+const getSharedRenderer = (): { renderer: THREE.WebGLRenderer; canvas: HTMLCanvasElement } => {
+  if (!sharedRenderer) {
+    sharedCanvas = document.createElement('canvas');
+    sharedCanvas.width = 128;
+    sharedCanvas.height = 128;
+    sharedRenderer = new THREE.WebGLRenderer({ canvas: sharedCanvas, alpha: true, antialias: true });
+    sharedRenderer.setPixelRatio(1);
+    sharedRenderer.setSize(128, 128);
+    sharedRenderer.setClearColor(0x000000, 0);
+  }
+  return { renderer: sharedRenderer, canvas: sharedCanvas! };
+};
+
+const renderThumbnail = async (url: string, isObj: boolean, mtlUrl?: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const { renderer, canvas } = getSharedRenderer();
+
+    if (url === 'sombrero') {
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      camera.position.set(0, 0.6, 3.2);
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+      const key = new THREE.DirectionalLight(0xffffff, 0.9);
+      key.position.set(1, 2, 3);
+      scene.add(ambient, key);
+
+      const model = new THREE.Group();
+      const mkMat = (c: number) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.78 });
+      const tan = 0xc4891a;
+      const dark = 0x1a0900;
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(1.50, 1.50, 0.07, 64), mkMat(tan));
+      brim.position.y = 0.035;
+      const crownLow = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.80, 0.80, 32), mkMat(tan));
+      crownLow.position.y = 0.47;
+      const crownTop = new THREE.Mesh(new THREE.SphereGeometry(0.52, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.55), mkMat(tan));
+      crownTop.position.y = 0.87;
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.70, 0.04, 8, 48), mkMat(dark));
+      band.rotation.x = Math.PI / 2;
+      band.position.y = 0.12;
+      model.add(brim, crownLow, crownTop, band);
+      scene.add(model);
+
+      renderer.render(scene, camera);
+      const dataUrl = canvas.toDataURL('image/png');
+      
+      scene.remove(model);
+      brim.geometry.dispose();
+      (brim.material as THREE.Material).dispose();
+      crownLow.geometry.dispose();
+      (crownLow.material as THREE.Material).dispose();
+      crownTop.geometry.dispose();
+      (crownTop.material as THREE.Material).dispose();
+      band.geometry.dispose();
+      (band.material as THREE.Material).dispose();
+
+      resolve(dataUrl);
+      return;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.set(0, 0, 8);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.75);
+    const key = new THREE.DirectionalLight(0xffffff, 0.85);
+    key.position.set(1, 2, 3);
+    scene.add(ambient, key);
+
+    const loadAndRender = (model: THREE.Object3D) => {
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const s = 4.0 / Math.max(maxDim, 0.001);
+      model.scale.setScalar(s);
+      model.position.copy(center).multiplyScalar(-s);
+
+      scene.add(model);
+      renderer.render(scene, camera);
+      const dataUrl = canvas.toDataURL('image/png');
+      
+      model.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m) => m.dispose());
+          } else if (child.material) {
+            child.material.dispose();
+          }
+        }
+      });
+
+      scene.remove(model);
+      resolve(dataUrl);
+    };
+
+    if (isObj) {
+      const mtlLoader = new MTLLoader();
+      const objLoader = new OBJLoader();
+      mtlLoader.load(mtlUrl!, (materials) => {
+        materials.preload();
+        objLoader.setMaterials(materials);
+        objLoader.load(url, (obj) => {
+          loadAndRender(obj);
+        }, undefined, () => resolve(''));
+      }, undefined, () => resolve(''));
+    } else {
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.load(url, (gltf) => {
+        loadAndRender(gltf.scene);
+      }, undefined, () => resolve(''));
+    }
+  });
+};
+
 export default function CreateScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
@@ -334,6 +467,7 @@ export default function CreateScreen() {
   const preprocessRunRef = useRef(0);
   const landmarkRunRef = useRef(0);
   const [landmarkPreviewLayout, setLandmarkPreviewLayout] = useState<StageLayout | null>(null);
+
 
   const [referenceExpressionName, setReferenceExpressionName] = useState<string | null>(null);
   const [referenceExpressionUri, setReferenceExpressionUri] = useState<string | null>(null);
@@ -426,11 +560,84 @@ export default function CreateScreen() {
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const [lightboxCompareUri, setLightboxCompareUri] = useState<string | null>(null);
 
-  type TabKey = 'analysis' | 'expression' | 'prolab' | 'makeup' | 'accessory';
+  type TabKey = 'analysis' | 'expression' | 'prolab' | 'makeup' | 'accessory' | 'accessory2';
   const [activeTab, setActiveTab] = useState<TabKey>('analysis');
+  const [landmarkPoints3d, setLandmarkPoints3d] = useState<{ x: number; y: number; z: number }[] | null>(null);
+  const [accessory2ResultB64, setAccessory2ResultB64] = useState<string | null>(null);
+  const [activeCategory2, setActiveCategory2] = useState<'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie' | 'mask'>('hat');
+  const [accessories2, setAccessories2] = useState({
+    glasses: false,
+    hat: false,
+    earrings: false,
+    necklace: false,
+    tie: false,
+    mask: false,
+  });
+  const [glassesStyle2, setGlassesStyle2] = useState<GlassesStyle>('ski');
+  const [hatStyle2, setHatStyle2] = useState<HatStyle>('top-hat');
+  const [earringStyle2, setEarringStyle2] = useState<EarringStyle>('hoop-earrings');
+  const [necklaceStyle2, setNecklaceStyle2] = useState<NecklaceStyle>('necklace');
+  const [tieStyle2, setTieStyle2] = useState<TieStyle>('necktie');
+  const [maskStyle2, setMaskStyle2] = useState<MaskStyle>('anon-mask');
+  const arEngineRef2 = useRef<AREngine | null>(null);
+  const canvasRef2 = useRef<HTMLCanvasElement | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
   const lightboxPanStartRef = useRef({ x: 0, y: 0 });
+
+  const [thumbnails2, setThumbnails2] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (activeTab !== 'accessory2' || !activeCategory2) return;
+    let active = true;
+
+    const generate = async () => {
+      let variants: { key: string; url?: string; isObj?: boolean; mtlUrl?: string }[] = [];
+      if (activeCategory2 === 'glasses') {
+        variants = GLASSES_VARIANTS.map((v) => ({ key: v.key, url: GLB_URLS[v.key] }));
+      } else if (activeCategory2 === 'hat') {
+        variants = HAT_VARIANTS.map((v) => ({ key: v.key, url: v.key === 'sombrero' ? 'sombrero' : HAT_URLS[v.key] }));
+      } else if (activeCategory2 === 'mask') {
+        variants = MASK_VARIANTS.map((v) => ({ key: v.key, url: MASK_URLS[v.key] }));
+      } else if (activeCategory2 === 'earrings') {
+        variants = EARRING_VARIANTS.map((v) => ({ key: v.key, url: EARRING_URLS[v.key] }));
+      } else if (activeCategory2 === 'necklace') {
+        variants = NECKLACE_VARIANTS.map((v) => ({ key: v.key, url: NECKLACE_URLS[v.key] }));
+      } else if (activeCategory2 === 'tie') {
+        variants = TIE_VARIANTS.map((v) => {
+          const config = TIE_URLS[v.key];
+          return {
+            key: v.key,
+            url: config.glb || config.obj,
+            isObj: !!config.obj,
+            mtlUrl: config.mtl,
+          };
+        });
+      }
+
+      for (const v of variants) {
+        if (!active) break;
+        const cacheKey = `${activeCategory2}_${v.key}`;
+        if (thumbnails2[cacheKey]) continue;
+
+        if (v.url) {
+          try {
+            const dataUrl = await renderThumbnail(v.url, !!v.isObj, v.mtlUrl);
+            if (dataUrl && active) {
+              setThumbnails2((prev) => ({ ...prev, [cacheKey]: dataUrl }));
+            }
+          } catch (e) {
+            console.error('Failed to render thumbnail for', cacheKey, e);
+          }
+        }
+      }
+    };
+
+    void generate();
+
+    return () => {
+      active = false;
+    };
+  }, [activeCategory2, activeTab]);
 
   const metricTableRows = useMemo<EvalMetricRow[]>(() => {
     if (!evalMetrics) {
@@ -1234,6 +1441,7 @@ export default function CreateScreen() {
       if (!data.success) throw new Error(data.message ?? 'Landmark detection failed');
       setLandmarkCount(data.landmark_count);
       setLandmarkPoints(Array.isArray(data.landmarks) ? data.landmarks : null);
+      setLandmarkPoints3d(Array.isArray(data.landmarks_3d) ? data.landmarks_3d : null);
     } catch (e: any) {
       if (runId !== landmarkRunRef.current) return;
       setLandmarkError(e?.message ?? 'Unknown error');
@@ -1332,6 +1540,99 @@ export default function CreateScreen() {
       setExpressionTransferLoading(false);
     }
   };
+
+  const mergeWebGLWithImage = useCallback(
+    (imageB64: string, webglCanvas: HTMLCanvasElement, width: number, height: number): Promise<string> => {
+      return new Promise((resolve) => {
+        const img = new (window as any).Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            ctx.drawImage(webglCanvas, 0, 0, width, height);
+          }
+          resolve(canvas.toDataURL('image/png').split(',')[1] ?? '');
+        };
+        img.onerror = () => resolve('');
+        img.src = `data:image/png;base64,${imageB64}`;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && activeTab === 'accessory2' && canvasRef2.current) {
+      arEngineRef2.current = new AREngine(canvasRef2.current);
+    }
+    return () => {
+      if (arEngineRef2.current) {
+        arEngineRef2.current.dispose();
+        arEngineRef2.current = null;
+      }
+    };
+  }, [activeTab]);
+
+  const [accessory2Loading, setAccessory2Loading] = useState(false);
+
+  const updateAccessory2 = useCallback(async () => {
+    const arEngine = arEngineRef2.current;
+    if (!arEngine || !landmarkPoints3d || !preprocessMeta || !preprocessedB64) {
+      setAccessory2ResultB64(null);
+      return;
+    }
+
+    setAccessory2Loading(true);
+    try {
+      arEngine.setAccessories(
+        accessories2.glasses,
+        accessories2.hat,
+        accessories2.earrings,
+        accessories2.necklace,
+        accessories2.tie,
+        accessories2.mask
+      );
+      arEngine.setGlassesStyle(glassesStyle2);
+      arEngine.setHatStyle(hatStyle2);
+      arEngine.setEarringStyle(earringStyle2);
+      arEngine.setNecklaceStyle(necklaceStyle2);
+      arEngine.setTieStyle(tieStyle2);
+      arEngine.setMaskStyle(maskStyle2);
+
+      const renderWidth = preprocessMeta.processedSize.width;
+      const renderHeight = preprocessMeta.processedSize.height;
+
+      arEngine.update(landmarkPoints3d, renderWidth, renderHeight);
+
+      const merged = await mergeWebGLWithImage(preprocessedB64, canvasRef2.current!, renderWidth, renderHeight);
+      setAccessory2ResultB64(merged || null);
+    } catch (e) {
+      console.error('[Accessory2] Error updating:', e);
+      setAccessory2ResultB64(null);
+    } finally {
+      setAccessory2Loading(false);
+    }
+  }, [
+    accessories2,
+    glassesStyle2,
+    hatStyle2,
+    earringStyle2,
+    necklaceStyle2,
+    tieStyle2,
+    maskStyle2,
+    landmarkPoints3d,
+    preprocessMeta,
+    preprocessedB64,
+    mergeWebGLWithImage,
+  ]);
+
+  useEffect(() => {
+    if (activeTab === 'accessory2') {
+      void updateAccessory2();
+    }
+  }, [updateAccessory2, activeTab]);
 
   const getProIntensityValue = useCallback((operation: ProOperation) => {
     return (proOperationIntensity[operation] ?? LAB_DEFAULT_INTENSITY) / 100;
@@ -1844,6 +2145,7 @@ export default function CreateScreen() {
       return makeupResultB64 ?? hairColorResultB64;
     }
     if (activeTab === 'accessory' && accessoryResultB64) return accessoryResultB64;
+    if (activeTab === 'accessory2' && accessory2ResultB64) return accessory2ResultB64;
     if (activeTab === 'expression' && expressionTransferResultB64) return expressionTransferResultB64;
     return null;
   };
@@ -2031,9 +2333,16 @@ export default function CreateScreen() {
             
             {/* Vertical Toolbar */}
             <View style={{ width: 64, borderRightWidth: 1, borderRightColor: panelBorder, backgroundColor: colorScheme === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)', paddingTop: 20, alignItems: 'center', gap: 20 }}>
-              {(['analysis', 'expression', 'prolab', 'makeup', 'accessory'] as TabKey[]).map((tab) => {
-                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'Lab', makeup: 'Makyaj', accessory: 'Aksesuar' };
-                  const icons: Record<TabKey, any> = { analysis: 'scan-outline', expression: 'happy-outline', prolab: 'flask-outline', makeup: 'color-palette-outline', accessory: 'glasses-outline' };
+              {(['analysis', 'expression', 'prolab', 'makeup', 'accessory', 'accessory2'] as TabKey[]).map((tab) => {
+                  const labels: Record<TabKey, string> = { analysis: 'Analiz', expression: 'İfade', prolab: 'Lab', makeup: 'Makyaj', accessory: 'Aksesuar', accessory2: 'Aksesuar 2' };
+                  const icons: Record<TabKey, any> = {
+                    analysis: 'scan-outline',
+                    expression: 'happy-outline',
+                    prolab: 'flask-outline',
+                    makeup: 'color-palette-outline',
+                    accessory: 'glasses-outline',
+                    accessory2: 'sparkles-outline'
+                  };
                   const isActive = activeTab === tab;
                   return (
                     <Pressable
@@ -2518,6 +2827,207 @@ export default function CreateScreen() {
             />
 
             {accessoryError ? <Text style={styles.errorText}>{accessoryError}</Text> : null}
+              </>
+            )}
+
+            {activeTab === 'accessory2' && (
+              <>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>5</Text></View>
+                  <ThemedText type="defaultSemiBold">3D Aksesuarlar (Aksesuar 2)</ThemedText>
+                </View>
+                <ThemedText style={styles.helperText}>
+                  Gerçek zamanlı 3D aksesuarları doğrudan fotoğrafa ekleyin.
+                </ThemedText>
+
+                {/* Categories */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 12 }} contentContainerStyle={{ gap: 8 }}>
+                  {(['glasses', 'hat', 'mask', 'earrings', 'necklace', 'tie'] as const).map((cat) => {
+                    const isActive = activeCategory2 === cat;
+                    const labels = {
+                      glasses: 'Gözlük',
+                      hat: 'Şapka',
+                      mask: 'Maske',
+                      earrings: 'Küpe',
+                      necklace: 'Kolye',
+                      tie: 'Kravat & Papyon'
+                    };
+                    return (
+                      <Pressable
+                        key={cat}
+                        onPress={() => setActiveCategory2(cat)}
+                        style={[
+                          styles.warpOpButton,
+                          {
+                            backgroundColor: isActive ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                          }
+                        ]}>
+                        <ThemedText style={{ color: isActive ? tintTextColor : colors.text, fontSize: 13, fontWeight: '600' }}>
+                          {labels[cat]}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Category Toggle Switch */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 8, backgroundColor: softSurface, padding: 12, borderRadius: 10 }}>
+                  <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Bu Kategoriyi Aktifleştir</ThemedText>
+                  <Switch
+                    value={accessories2[activeCategory2]}
+                    onValueChange={(val) => setAccessories2(prev => ({ ...prev, [activeCategory2]: val }))}
+                    trackColor={{ true: Colors[colorScheme].tint }}
+                  />
+                </View>
+
+                {/* Styles List */}
+                <ScrollView
+                  style={{ maxHeight: 300, marginTop: 8 }}
+                  contentContainerStyle={styles.variantsGrid}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled={true}>
+
+                  {activeCategory2 === 'glasses' && GLASSES_VARIANTS.map(({ key, label }) => {
+                    const isSelected = accessories2.glasses && glassesStyle2 === key;
+                    const cacheKey = `glasses_${key}`;
+                    const thumbUrl = thumbnails2[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => {
+                        setAccessories2(prev => ({ ...prev, glasses: true }));
+                        setGlassesStyle2(key);
+                      }}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : softSurface,
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} contentFit="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {activeCategory2 === 'hat' && HAT_VARIANTS.map(({ key, label }) => {
+                    const isSelected = accessories2.hat && hatStyle2 === key;
+                    const cacheKey = `hat_${key}`;
+                    const thumbUrl = thumbnails2[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => {
+                        setAccessories2(prev => ({ ...prev, hat: true }));
+                        setHatStyle2(key);
+                      }}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : softSurface,
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} contentFit="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {activeCategory2 === 'mask' && MASK_VARIANTS.map(({ key, label }) => {
+                    const isSelected = accessories2.mask && maskStyle2 === key;
+                    const cacheKey = `mask_${key}`;
+                    const thumbUrl = thumbnails2[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => {
+                        setAccessories2(prev => ({ ...prev, mask: true }));
+                        setMaskStyle2(key);
+                      }}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : softSurface,
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} contentFit="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {activeCategory2 === 'earrings' && EARRING_VARIANTS.map(({ key, label }) => {
+                    const isSelected = accessories2.earrings && earringStyle2 === key;
+                    const cacheKey = `earrings_${key}`;
+                    const thumbUrl = thumbnails2[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => {
+                        setAccessories2(prev => ({ ...prev, earrings: true }));
+                        setEarringStyle2(key);
+                      }}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : softSurface,
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} contentFit="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {activeCategory2 === 'necklace' && NECKLACE_VARIANTS.map(({ key, label }) => {
+                    const isSelected = accessories2.necklace && necklaceStyle2 === key;
+                    const cacheKey = `necklace_${key}`;
+                    const thumbUrl = thumbnails2[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => {
+                        setAccessories2(prev => ({ ...prev, necklace: true }));
+                        setNecklaceStyle2(key);
+                      }}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : softSurface,
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} contentFit="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {activeCategory2 === 'tie' && TIE_VARIANTS.map(({ key, label }) => {
+                    const isSelected = accessories2.tie && tieStyle2 === key;
+                    const cacheKey = `tie_${key}`;
+                    const thumbUrl = thumbnails2[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => {
+                        setAccessories2(prev => ({ ...prev, tie: true }));
+                        setTieStyle2(key);
+                      }}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : softSurface,
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} contentFit="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: colors.text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
               </>
             )}
 
@@ -3130,6 +3640,20 @@ export default function CreateScreen() {
         </View>
       </Modal>
 
+      {Platform.OS === 'web' && activeTab === 'accessory2' && (
+        <canvas
+          ref={canvasRef2}
+          width={preprocessMeta?.processedSize?.width ?? 512}
+          height={preprocessMeta?.processedSize?.height ?? 512}
+          style={{
+            position: 'absolute',
+            left: -9999,
+            top: -9999,
+            width: preprocessMeta?.processedSize?.width ?? 512,
+            height: preprocessMeta?.processedSize?.height ?? 512,
+          }}
+        />
+      )}
     </StudioScreen>
   );
 }
@@ -4483,5 +5007,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     opacity: 0.9,
+  },
+  variantsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingBottom: 8,
+  },
+  variantButton: {
+    width: '31%',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  variantImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  variantImagePlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  variantLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });

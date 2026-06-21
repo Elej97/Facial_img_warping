@@ -148,8 +148,6 @@ const PRO_OPERATIONS: ProLiveOperation[] = [
   'brow_lift',
   'lip_plump',
   'slim_face',
-  'aging',
-  'deaging',
 ];
 
 const PRO_LABEL: Record<ProLiveOperation, string> = {
@@ -270,7 +268,7 @@ const GLASSES_NAMES = [
   'Transparent', 'Colorful', 'Sunglasses', 'Sport', 'Vintage', 'Minimal', 'Cat Eye',
   'Geek', 'Night', 'Neon', 'Metal', 'Y2K', 'Soft', 'Crystal', 'Cyber', 'Chic', 'Urban'
 ];
-const GLASSES_VARIANTS = [
+export const GLASSES_VARIANTS = [
   { key: 'ski' as GlassesStyle, label: 'Kayak', color: '#22aaff' },
   { key: 'pixel' as GlassesStyle, label: 'Pixel', color: '#cc44ff' },
   { key: 'party' as GlassesStyle, label: 'Party', color: '#ff8800' },
@@ -281,7 +279,7 @@ const GLASSES_VARIANTS = [
   })),
 ];
 
-const HAT_VARIANTS = [
+export const HAT_VARIANTS = [
   { key: 'top-hat' as HatStyle, label: 'Silindir', color: '#1a0f00' },
   { key: 'baseball-cap' as HatStyle, label: 'Şapka', color: '#224488' },
   { key: 'cowboy-hat' as HatStyle, label: 'Kovboy', color: '#8b6914' },
@@ -295,23 +293,23 @@ const HAT_VARIANTS = [
   { key: 'cat-ears' as HatStyle, label: 'Kedi Kulağı', color: '#ffaacc' },
 ];
 
-const EARRING_VARIANTS = [
+export const EARRING_VARIANTS = [
   { key: 'hoop-earrings' as EarringStyle, label: 'Halka', color: '#d4a030' },
   { key: 'pearl-earrings' as EarringStyle, label: 'İnci', color: '#f0f0f0' },
   { key: 'diamond-studs' as EarringStyle, label: 'Elmas', color: '#aaddff' },
 ];
 
-const NECKLACE_VARIANTS = [
+export const NECKLACE_VARIANTS = [
   { key: 'necklace' as NecklaceStyle, label: 'Kolye', color: '#d4a030' },
   { key: 'pearl-necklace' as NecklaceStyle, label: 'İnci', color: '#f0f0f0' },
 ];
 
-const TIE_VARIANTS = [
+export const TIE_VARIANTS = [
   { key: 'necktie' as TieStyle, label: 'Kravat', color: '#1a1a1a' },
   { key: 'bowtie' as TieStyle, label: 'Papyon', color: '#882222' },
 ];
 
-const MASK_VARIANTS = [
+export const MASK_VARIANTS = [
   { key: 'clown-mask' as MaskStyle, label: 'Palyaço', color: '#cc2222' },
   { key: 'fox-head' as MaskStyle, label: 'Tilki', color: '#cc6600' },
   { key: 'anon-mask' as MaskStyle, label: 'Anonim', color: '#222244' },
@@ -1077,17 +1075,27 @@ function drawHeart2(ctx: CanvasRenderingContext2D, cx: number, cy: number, s: nu
   ctx.fill();
 }
 
+let sharedRenderer: THREE.WebGLRenderer | null = null;
+let sharedCanvas: HTMLCanvasElement | null = null;
+
+const getSharedRenderer = (): { renderer: THREE.WebGLRenderer; canvas: HTMLCanvasElement } => {
+  if (!sharedRenderer) {
+    sharedCanvas = document.createElement('canvas');
+    sharedCanvas.width = 128;
+    sharedCanvas.height = 128;
+    sharedRenderer = new THREE.WebGLRenderer({ canvas: sharedCanvas, alpha: true, antialias: true });
+    sharedRenderer.setPixelRatio(1);
+    sharedRenderer.setSize(128, 128);
+    sharedRenderer.setClearColor(0x000000, 0);
+  }
+  return { renderer: sharedRenderer, canvas: sharedCanvas! };
+};
+
 const renderThumbnail = async (url: string, isObj: boolean, mtlUrl?: string): Promise<string> => {
   return new Promise((resolve) => {
-    if (url === 'sombrero') {
-      const canvas = document.createElement('canvas');
-      canvas.width = 128;
-      canvas.height = 128;
-      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-      renderer.setPixelRatio(1);
-      renderer.setSize(128, 128);
-      renderer.setClearColor(0x000000, 0);
+    const { renderer, canvas } = getSharedRenderer();
 
+    if (url === 'sombrero') {
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
       camera.position.set(0, 0.6, 3.2);
@@ -1118,18 +1126,20 @@ const renderThumbnail = async (url: string, isObj: boolean, mtlUrl?: string): Pr
 
       renderer.render(scene, camera);
       const dataUrl = canvas.toDataURL('image/png');
-      renderer.dispose();
+      
+      scene.remove(model);
+      brim.geometry.dispose();
+      (brim.material as THREE.Material).dispose();
+      crownLow.geometry.dispose();
+      (crownLow.material as THREE.Material).dispose();
+      crownTop.geometry.dispose();
+      (crownTop.material as THREE.Material).dispose();
+      band.geometry.dispose();
+      (band.material as THREE.Material).dispose();
+
       resolve(dataUrl);
       return;
     }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setPixelRatio(1);
-    renderer.setSize(128, 128);
-    renderer.setClearColor(0x000000, 0);
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -1176,8 +1186,19 @@ const renderThumbnail = async (url: string, isObj: boolean, mtlUrl?: string): Pr
       scene.add(model);
       renderer.render(scene, camera);
       const dataUrl = canvas.toDataURL('image/png');
+      
+      model.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m) => m.dispose());
+          } else if (child.material) {
+            child.material.dispose();
+          }
+        }
+      });
+
       scene.remove(model);
-      renderer.dispose();
       resolve(dataUrl);
     };
 
@@ -1189,13 +1210,13 @@ const renderThumbnail = async (url: string, isObj: boolean, mtlUrl?: string): Pr
         objLoader.setMaterials(materials);
         objLoader.load(url, (obj) => {
           loadAndRender(obj);
-        }, undefined, () => { renderer.dispose(); resolve(''); });
-      }, undefined, () => { renderer.dispose(); resolve(''); });
+        }, undefined, () => resolve(''));
+      }, undefined, () => resolve(''));
     } else {
       const gltfLoader = new GLTFLoader();
       gltfLoader.load(url, (gltf) => {
         loadAndRender(gltf.scene);
-      }, undefined, () => { renderer.dispose(); resolve(''); });
+      }, undefined, () => resolve(''));
     }
   });
 };
@@ -1564,7 +1585,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                   return;
                 }
 
-                const image = new Image();
+                const image = new (window as any).Image();
                 image.onload = () => {
                   if (requestId !== previewRequestIdRef.current) {
                     return;

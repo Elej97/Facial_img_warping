@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 type Landmark = { x: number; y: number; z: number };
 
@@ -16,31 +16,31 @@ export type HatStyle =
   | 'graduation-cap' | 'headphones' | 'pirate-hat' | 'sombrero' | 'wizard-hat' | 'cat-ears';
 
 export const HAT_URLS: Record<HatStyle, string> = {
-  'top-hat':        '/models/hats/top-hat.glb',
-  'baseball-cap':   '/models/hats/baseball-cap.glb',
-  'cowboy-hat':     '/models/hats/cowboy-hat.glb',
-  'fox-hat':        '/models/hats/fox-hat.glb',
-  'frog-hat':       '/models/hats/frog-hat.glb',
+  'top-hat': '/models/hats/top-hat.glb',
+  'baseball-cap': '/models/hats/baseball-cap.glb',
+  'cowboy-hat': '/models/hats/cowboy-hat.glb',
+  'fox-hat': '/models/hats/fox-hat.glb',
+  'frog-hat': '/models/hats/frog-hat.glb',
   'graduation-cap': '/models/hats/graduation-cap.glb',
-  'headphones':     '/models/hats/headphones.glb',
-  'pirate-hat':     '/models/hats/pirate-hat.glb',
-  'sombrero':       '/models/hats/sombrero.glb',
-  'wizard-hat':     '/models/hats/wizard-hat.glb',
-  'cat-ears':       '/models/hats/cat-ears.glb',
+  'headphones': '/models/hats/headphones.glb',
+  'pirate-hat': '/models/hats/pirate-hat.glb',
+  'sombrero': '/models/hats/sombrero.glb',
+  'wizard-hat': '/models/hats/wizard-hat.glb',
+  'cat-ears': '/models/hats/cat-ears.glb',
 };
 
 export type EarringStyle = 'diamond-studs' | 'hoop-earrings' | 'pearl-earrings';
 
 export const EARRING_URLS: Record<EarringStyle, string> = {
-  'diamond-studs':  '/models/earrings/diamond-studs.glb',
-  'hoop-earrings':  '/models/earrings/hoop-earrings.glb',
+  'diamond-studs': '/models/earrings/diamond-studs.glb',
+  'hoop-earrings': '/models/earrings/hoop-earrings.glb',
   'pearl-earrings': '/models/earrings/pearl-earrings.glb',
 };
 
 export type NecklaceStyle = 'necklace' | 'pearl-necklace';
 
 export const NECKLACE_URLS: Record<NecklaceStyle, string> = {
-  'necklace':       '/models/necklaces/necklace.glb',
+  'necklace': '/models/necklaces/necklace.glb',
   'pearl-necklace': '/models/necklaces/pearl-necklace.glb',
 };
 
@@ -48,61 +48,75 @@ export type TieStyle = 'necktie' | 'bowtie';
 
 export const TIE_URLS: Record<TieStyle, { obj?: string, mtl?: string, glb?: string, scale?: number, scaleY?: number, dy?: number }> = {
   necktie: { glb: '/models/ties/Necktie.glb?v=3', scale: 0.8, scaleY: 1.25 }, // Stretched vertically to make it longer
-  bowtie:  { obj: '/models/ties/Bowtie_01.obj?v=3', mtl: '/models/ties/Bowtie_01.mtl?v=3', scale: 1.2, dy: 0.1 },
+  bowtie: { obj: '/models/ties/Bowtie_01.obj?v=3', mtl: '/models/ties/Bowtie_01.mtl?v=3', scale: 1.2, dy: 0.1 },
 };
 
 export type MaskStyle = 'clown-mask' | 'fox-head' | 'anon-mask' | 'gas-mask';
 
 export const MASK_URLS: Record<MaskStyle, string> = {
   'clown-mask': '/models/masks/clown-mask.glb',
-  'fox-head':   '/models/masks/fox-head.glb',
-  'anon-mask':  '/models/masks/anon-mask.glb',
-  'gas-mask':   '/models/masks/gas-mask.glb',
+  'fox-head': '/models/masks/fox-head.glb',
+  'anon-mask': '/models/masks/anon-mask.glb',
+  'gas-mask': '/models/masks/gas-mask.glb',
 };
 
 const MASK_IPD_SCALE: Record<MaskStyle, number> = {
   'clown-mask': 2.8,
-  'fox-head':   3.8,
-  'anon-mask':  2.5,
-  'gas-mask':   2.8,
+  'fox-head': 3.8,
+  'anon-mask': 2.5,
+  'gas-mask': 2.8,
 };
 
 const MASK_UP_OFFSET: Record<MaskStyle, number> = {
   'clown-mask': -0.18,
-  'fox-head':    0.05,
-  'anon-mask':  -0.15,
-  'gas-mask':   -0.28,
+  'fox-head': 0.05,
+  'anon-mask': -0.15,
+  'gas-mask': -0.28,
+};
+
+const HAT_OFFSETS: Record<HatStyle, { dy: number; dz: number; scale?: number }> = {
+  'top-hat': { dy: 0.15, dz: -0.05, scale: 1.05 },
+  'baseball-cap': { dy: -0.12, dz: 0.05, scale: 1.30 },
+  'cowboy-hat': { dy: -0.18, dz: -0.05, scale: 1.45 },
+  'fox-hat': { dy: -0.08, dz: 0.00, scale: 1.05 },
+  'frog-hat': { dy: -0.08, dz: 0.00, scale: 1.05 },
+  'graduation-cap': { dy: -0.15, dz: -0.02, scale: 1.05 },
+  'headphones': { dy: -0.95, dz: -0.05, scale: 1.05 },
+  'pirate-hat': { dy: -0.16, dz: -0.02, scale: 1.05 },
+  'sombrero': { dy: -0.18, dz: -0.02, scale: 1.50 },
+  'wizard-hat': { dy: -0.14, dz: -0.05, scale: 1.35 },
+  'cat-ears': { dy: -0.45, dz: -0.02, scale: 1.00 },
 };
 
 export const GLB_URLS: Record<GlassesStyle, string> = {
-  ski:   '/models/glasses/ski-goggles.glb',
+  ski: '/models/glasses/ski-goggles.glb',
   pixel: '/models/glasses/pixel-glasses.glb',
   party: '/models/glasses/party-glasses.glb',
-  g0:    '/models/glasses/glasses-classic.glb',
-  g1:    '/models/glasses/glasses-1.glb',
-  g2:    '/models/glasses/glasses-2.glb',
-  g3:    '/models/glasses/glasses-3.glb',
-  g4:    '/models/glasses/glasses-4.glb',
-  g5:    '/models/glasses/glasses-5.glb',
-  g6:    '/models/glasses/glasses-6.glb',
-  g7:    '/models/glasses/glasses-7.glb',
-  g8:    '/models/glasses/glasses-8.glb',
-  g9:    '/models/glasses/glasses-9.glb',
-  g10:   '/models/glasses/glasses-10.glb',
-  g11:   '/models/glasses/glasses-11.glb',
-  g12:   '/models/glasses/glasses-12.glb',
-  g13:   '/models/glasses/glasses-13.glb',
-  g14:   '/models/glasses/glasses-14.glb',
-  g15:   '/models/glasses/glasses-15.glb',
-  g16:   '/models/glasses/glasses-16.glb',
-  g17:   '/models/glasses/glasses-17.glb',
-  g18:   '/models/glasses/glasses-18.glb',
-  g19:   '/models/glasses/glasses-19.glb',
-  g20:   '/models/glasses/glasses-20.glb',
-  g21:   '/models/glasses/glasses-21.glb',
-  g22:   '/models/glasses/glasses-22.glb',
-  g23:   '/models/glasses/glasses-23.glb',
-  g24:   '/models/glasses/glasses-24.glb',
+  g0: '/models/glasses/glasses-classic.glb',
+  g1: '/models/glasses/glasses-1.glb',
+  g2: '/models/glasses/glasses-2.glb',
+  g3: '/models/glasses/glasses-3.glb',
+  g4: '/models/glasses/glasses-4.glb',
+  g5: '/models/glasses/glasses-5.glb',
+  g6: '/models/glasses/glasses-6.glb',
+  g7: '/models/glasses/glasses-7.glb',
+  g8: '/models/glasses/glasses-8.glb',
+  g9: '/models/glasses/glasses-9.glb',
+  g10: '/models/glasses/glasses-10.glb',
+  g11: '/models/glasses/glasses-11.glb',
+  g12: '/models/glasses/glasses-12.glb',
+  g13: '/models/glasses/glasses-13.glb',
+  g14: '/models/glasses/glasses-14.glb',
+  g15: '/models/glasses/glasses-15.glb',
+  g16: '/models/glasses/glasses-16.glb',
+  g17: '/models/glasses/glasses-17.glb',
+  g18: '/models/glasses/glasses-18.glb',
+  g19: '/models/glasses/glasses-19.glb',
+  g20: '/models/glasses/glasses-20.glb',
+  g21: '/models/glasses/glasses-21.glb',
+  g22: '/models/glasses/glasses-22.glb',
+  g23: '/models/glasses/glasses-23.glb',
+  g24: '/models/glasses/glasses-24.glb',
 };
 
 const FACE_OVAL = [
@@ -155,6 +169,7 @@ export class AREngine {
   private hatMap: Record<HatStyle, THREE.Group>;
   private activeHat: THREE.Group;
   private hatEnabled = false;
+  private activeHatStyle: HatStyle = 'top-hat';
 
   private earringMap: Record<EarringStyle, { L: THREE.Group; R: THREE.Group }>;
   private activeEarringL: THREE.Group;
@@ -178,7 +193,7 @@ export class AREngine {
   private neckOccluder: THREE.Mesh;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.sortObjects = true;
@@ -291,7 +306,7 @@ export class AREngine {
         model.position.sub(center);
         model.scale.setScalar(2.6 / Math.max(size.x, 0.001));
         this.glassesMap[style].add(model);
-      }, undefined, () => {});
+      }, undefined, () => { });
     };
     for (const [style, url] of Object.entries(GLB_URLS) as [GlassesStyle, string][]) load(style, url);
   }
@@ -374,7 +389,7 @@ export class AREngine {
         const modelR = model.clone(true);
         modelR.scale.x *= -1;
         this.earringMap[style].R.add(modelR);
-      }, undefined, () => {});
+      }, undefined, () => { });
     };
     for (const [style, url] of Object.entries(EARRING_URLS) as [EarringStyle, string][]) load(style, url);
   }
@@ -404,11 +419,11 @@ export class AREngine {
     const mtl = new MTLLoader();
     for (const [style, config] of Object.entries(TIE_URLS) as [TieStyle, any][]) {
       const process = (model: THREE.Object3D) => {
-        model.traverse(c => { 
+        model.traverse(c => {
           if (c instanceof THREE.Mesh) {
             if (Array.isArray(c.material)) c.material.forEach(m => m.side = THREE.DoubleSide);
             else if (c.material) c.material.side = THREE.DoubleSide;
-          } 
+          }
         });
         model.updateWorldMatrix(true, true);
         const b = new THREE.Box3().setFromObject(model);
@@ -487,45 +502,64 @@ export class AREngine {
     }
 
     if (this.activeHat.visible) {
-      this.activeHat.position.copy(toVec3(landmarks[10], W, H)).addScaledVector(face.up, face.ipd * 0.06).addScaledVector(face.forward, face.ipd * 0.04);
+      const config = HAT_OFFSETS[this.activeHatStyle] || { dy: -0.10, dz: 0 };
+      const scaleVal = config.scale || 1.0;
+      this.activeHat.position
+        .copy(toVec3(landmarks[10], W, H))
+        .addScaledVector(face.up, face.ipd * config.dy)
+        .addScaledVector(face.forward, face.ipd * config.dz);
       this.activeHat.quaternion.copy(face.quat);
-      this.activeHat.scale.setScalar(face.ipd);
+      this.activeHat.scale.setScalar(face.ipd * scaleVal);
     }
 
     if (this.activeEarringL.visible) {
-      this.activeEarringL.position.copy(toVec3(landmarks[93], W, H)).addScaledVector(face.up, -face.ipd * 0.02);
+      this.activeEarringL.position
+        .copy(toVec3(landmarks[93], W, H))
+        .addScaledVector(face.up, -face.ipd * 0.12)
+        .addScaledVector(face.right, -face.ipd * 0.08)
+        .addScaledVector(face.forward, -face.ipd * 0.12);
       this.activeEarringL.quaternion.copy(face.quat);
       this.activeEarringL.scale.setScalar(face.ipd);
-      this.activeEarringR.position.copy(toVec3(landmarks[323], W, H)).addScaledVector(face.up, -face.ipd * 0.02);
+
+      this.activeEarringR.position
+        .copy(toVec3(landmarks[323], W, H))
+        .addScaledVector(face.up, -face.ipd * 0.12)
+        .addScaledVector(face.right, face.ipd * 0.08)
+        .addScaledVector(face.forward, -face.ipd * 0.12);
       this.activeEarringR.quaternion.copy(face.quat);
       this.activeEarringR.scale.setScalar(face.ipd);
     }
 
     if (this.necklaceEnabled || this.tieEnabled) {
-      const jawWidth = toVec3(landmarks[132], W, H).distanceTo(toVec3(landmarks[361], W, H));
-      const anchor = toVec3(landmarks[152], W, H).addScaledVector(face.up, -jawWidth * 0.25).addScaledVector(face.forward, jawWidth * 0.10);
-      if (this.necklaceEnabled) { 
-        const necklaceAnchor = anchor.clone().addScaledVector(face.up, jawWidth * 0.22);
-        this.activeNecklace.position.copy(necklaceAnchor); 
-        this.activeNecklace.quaternion.copy(face.quat); 
-        // Scale Y by 0.75 to shorten the necklace length
-        this.activeNecklace.scale.set(jawWidth * 1.25, jawWidth * 1.25 * 0.75, jawWidth * 1.25); 
+      if (this.necklaceEnabled) {
+        const neckPos = toVec3(landmarks[152], W, H)
+          .addScaledVector(face.up, -face.ipd * 0.38)
+          .addScaledVector(face.forward, -face.ipd * 0.24);
+        this.activeNecklace.position.copy(neckPos);
+        this.activeNecklace.quaternion.copy(face.quat);
+        this.activeNecklace.scale.set(face.ipd * 1.5, face.ipd * 1.5 * 0.75, face.ipd * 1.5);
       }
-      if (this.tieEnabled) { 
-        this.activeTie.position.copy(anchor); 
-        this.activeTie.quaternion.copy(face.quat); 
-        this.activeTie.scale.setScalar(jawWidth * 0.65); 
+      if (this.tieEnabled) {
+        const tiePos = toVec3(landmarks[152], W, H)
+          .addScaledVector(face.up, -face.ipd * 0.35)
+          .addScaledVector(face.forward, -face.ipd * 0.18);
+        this.activeTie.position.copy(tiePos);
+        this.activeTie.quaternion.copy(face.quat);
+        this.activeTie.scale.setScalar(face.ipd * 0.75);
       }
-      // Push occluder back so its front face rests right at the anchor
-      this.neckOccluder.position.copy(anchor.clone().addScaledVector(face.up, -jawWidth * 0.25)).addScaledVector(face.forward, -jawWidth * 0.30);
+
+      const occluderPos = toVec3(landmarks[152], W, H)
+        .addScaledVector(face.up, -face.ipd * 0.60)
+        .addScaledVector(face.forward, -face.ipd * 0.45);
+      this.neckOccluder.position.copy(occluderPos);
       this.neckOccluder.quaternion.copy(face.quat);
-      this.neckOccluder.scale.set(jawWidth * 1.05, jawWidth, jawWidth * 0.60);
+      this.neckOccluder.scale.set(face.ipd * 1.3, face.ipd * 1.2, face.ipd * 0.8);
     }
 
     if (this.activeMask.visible) {
       this.activeMask.position
         .copy(face.bridge)
-        .addScaledVector(face.forward, face.ipd * 0.18)
+        .addScaledVector(face.forward, face.ipd * 0.05)
         .addScaledVector(face.up, face.ipd * MASK_UP_OFFSET[this.activeMaskStyle]);
       this.activeMask.quaternion.copy(face.quat);
       this.activeMask.scale.setScalar(face.ipd);
@@ -561,7 +595,7 @@ export class AREngine {
   }
 
   setGlassesStyle(style: GlassesStyle): void { this.activeGlasses.visible = false; this.activeGlasses = this.glassesMap[style]; this.activeGlasses.visible = this.glassesEnabled; }
-  setHatStyle(style: HatStyle): void { this.activeHat.visible = false; this.activeHat = this.hatMap[style]; this.activeHat.visible = this.hatEnabled; }
+  setHatStyle(style: HatStyle): void { this.activeHat.visible = false; this.activeHat = this.hatMap[style]; this.activeHatStyle = style; this.activeHat.visible = this.hatEnabled; }
   setEarringStyle(style: EarringStyle): void { this.activeEarringL.visible = false; this.activeEarringR.visible = false; this.activeEarringL = this.earringMap[style].L; this.activeEarringR = this.earringMap[style].R; this.activeEarringL.visible = this.earringsEnabled; this.activeEarringR.visible = this.earringsEnabled; }
   setNecklaceStyle(style: NecklaceStyle): void { this.activeNecklace.visible = false; this.activeNecklace = this.necklaceMap[style]; if (this.necklaceEnabled) this.activeNecklace.visible = true; }
   setTieStyle(style: TieStyle): void { this.activeTie.visible = false; this.activeTie = this.tieMap[style]; if (this.tieEnabled) this.activeTie.visible = true; }

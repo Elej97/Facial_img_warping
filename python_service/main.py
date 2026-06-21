@@ -304,10 +304,14 @@ async def landmarks(
         if lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected for landmark extraction."}
 
+        from modules.landmark import detect_landmarks_raw
+        lms_3d = detect_landmarks_raw(img)
+
         annotated = draw_landmarks(img, lms)
         return {
             "success": True,
             "landmarks": [[x, y] for x, y in lms],
+            "landmarks_3d": lms_3d,
             "landmark_image_b64": numpy_to_b64(annotated),
             "landmark_count": len(lms),
             "landmark_backend": landmark_backend,
