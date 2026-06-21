@@ -15,7 +15,7 @@ export type HatStyle =
   | 'top-hat' | 'baseball-cap' | 'cowboy-hat' | 'fox-hat' | 'frog-hat'
   | 'graduation-cap' | 'headphones' | 'pirate-hat' | 'sombrero' | 'wizard-hat' | 'cat-ears';
 
-const HAT_URLS: Record<HatStyle, string> = {
+export const HAT_URLS: Record<HatStyle, string> = {
   'top-hat':        '/models/hats/top-hat.glb',
   'baseball-cap':   '/models/hats/baseball-cap.glb',
   'cowboy-hat':     '/models/hats/cowboy-hat.glb',
@@ -31,7 +31,7 @@ const HAT_URLS: Record<HatStyle, string> = {
 
 export type EarringStyle = 'diamond-studs' | 'hoop-earrings' | 'pearl-earrings';
 
-const EARRING_URLS: Record<EarringStyle, string> = {
+export const EARRING_URLS: Record<EarringStyle, string> = {
   'diamond-studs':  '/models/earrings/diamond-studs.glb',
   'hoop-earrings':  '/models/earrings/hoop-earrings.glb',
   'pearl-earrings': '/models/earrings/pearl-earrings.glb',
@@ -39,21 +39,21 @@ const EARRING_URLS: Record<EarringStyle, string> = {
 
 export type NecklaceStyle = 'necklace' | 'pearl-necklace';
 
-const NECKLACE_URLS: Record<NecklaceStyle, string> = {
+export const NECKLACE_URLS: Record<NecklaceStyle, string> = {
   'necklace':       '/models/necklaces/necklace.glb',
   'pearl-necklace': '/models/necklaces/pearl-necklace.glb',
 };
 
 export type TieStyle = 'necktie' | 'bowtie';
 
-const TIE_URLS: Record<TieStyle, { obj?: string, mtl?: string, glb?: string, scale?: number, scaleY?: number, dy?: number }> = {
+export const TIE_URLS: Record<TieStyle, { obj?: string, mtl?: string, glb?: string, scale?: number, scaleY?: number, dy?: number }> = {
   necktie: { glb: '/models/ties/Necktie.glb?v=3', scale: 0.8, scaleY: 1.25 }, // Stretched vertically to make it longer
   bowtie:  { obj: '/models/ties/Bowtie_01.obj?v=3', mtl: '/models/ties/Bowtie_01.mtl?v=3', scale: 1.2, dy: 0.1 },
 };
 
 export type MaskStyle = 'clown-mask' | 'fox-head' | 'anon-mask' | 'gas-mask';
 
-const MASK_URLS: Record<MaskStyle, string> = {
+export const MASK_URLS: Record<MaskStyle, string> = {
   'clown-mask': '/models/masks/clown-mask.glb',
   'fox-head':   '/models/masks/fox-head.glb',
   'anon-mask':  '/models/masks/anon-mask.glb',
@@ -74,7 +74,7 @@ const MASK_UP_OFFSET: Record<MaskStyle, number> = {
   'gas-mask':   -0.28,
 };
 
-const GLB_URLS: Record<GlassesStyle, string> = {
+export const GLB_URLS: Record<GlassesStyle, string> = {
   ski:   '/models/glasses/ski-goggles.glb',
   pixel: '/models/glasses/pixel-glasses.glb',
   party: '/models/glasses/party-glasses.glb',

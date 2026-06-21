@@ -1,11 +1,15 @@
 import Slider from '@react-native-community/slider';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 
 import { frequencyProFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
 import type { EarringStyle, GlassesStyle, HatStyle, MaskStyle, NecklaceStyle, TieStyle } from './ar-engine';
-import { AREngine } from './ar-engine';
+import { AREngine, GLB_URLS, HAT_URLS, EARRING_URLS, NECKLACE_URLS, TIE_URLS, MASK_URLS } from './ar-engine';
 
 export type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 
@@ -70,64 +74,64 @@ const EMOTION_PRESETS: Record<EmotionId, {
   angry: {
     label: 'Kızgın', icon: '😠', tintColor: '220,40,40', tintAlpha: 0.00,
     anchors: [
-      { idx: 107, dx:  0.018, dy:  0.044, effect: 'slim' },
-      { idx: 336, dx: -0.018, dy:  0.044, effect: 'slim' },
-      { idx: 70,  dx:  0,     dy:  0.022, effect: 'slim' },
-      { idx: 300, dx:  0,     dy:  0.022, effect: 'slim' },
-      { idx: 61,  dx:  0.006, dy:  0.028, effect: 'smile' },
-      { idx: 291, dx: -0.006, dy:  0.028, effect: 'smile' },
+      { idx: 107, dx: 0.018, dy: 0.044, effect: 'slim' },
+      { idx: 336, dx: -0.018, dy: 0.044, effect: 'slim' },
+      { idx: 70, dx: 0, dy: 0.022, effect: 'slim' },
+      { idx: 300, dx: 0, dy: 0.022, effect: 'slim' },
+      { idx: 61, dx: 0.006, dy: 0.028, effect: 'smile' },
+      { idx: 291, dx: -0.006, dy: 0.028, effect: 'smile' },
     ],
   },
   sad: {
     label: 'Üzgün', icon: '😢', tintColor: '40,80,220', tintAlpha: 0.00,
     anchors: [
-      { idx: 107, dx:  0,      dy: -0.038, effect: 'slim' },
-      { idx: 336, dx:  0,      dy: -0.038, effect: 'slim' },
-      { idx: 70,  dx:  0,      dy:  0.014, effect: 'slim' },
-      { idx: 300, dx:  0,      dy:  0.014, effect: 'slim' },
-      { idx: 61,  dx:  0.010,  dy:  0.034, effect: 'smile' },
-      { idx: 291, dx: -0.010,  dy:  0.034, effect: 'smile' },
-      { idx: 17,  dx:  0,      dy:  0.018, effect: 'smile' },
+      { idx: 107, dx: 0, dy: -0.038, effect: 'slim' },
+      { idx: 336, dx: 0, dy: -0.038, effect: 'slim' },
+      { idx: 70, dx: 0, dy: 0.014, effect: 'slim' },
+      { idx: 300, dx: 0, dy: 0.014, effect: 'slim' },
+      { idx: 61, dx: 0.010, dy: 0.034, effect: 'smile' },
+      { idx: 291, dx: -0.010, dy: 0.034, effect: 'smile' },
+      { idx: 17, dx: 0, dy: 0.018, effect: 'smile' },
     ],
   },
   surprised: {
     label: 'Şaşkın', icon: '😲', tintColor: '255,200,20', tintAlpha: 0.00,
     anchors: [
-      { idx: 70,  dx: 0, dy: -0.046, effect: 'brow' },
-      { idx: 63,  dx: 0, dy: -0.038, effect: 'brow' },
+      { idx: 70, dx: 0, dy: -0.046, effect: 'brow' },
+      { idx: 63, dx: 0, dy: -0.038, effect: 'brow' },
       { idx: 105, dx: 0, dy: -0.036, effect: 'brow' },
       { idx: 107, dx: 0, dy: -0.032, effect: 'brow' },
       { idx: 300, dx: 0, dy: -0.046, effect: 'brow' },
       { idx: 293, dx: 0, dy: -0.038, effect: 'brow' },
       { idx: 334, dx: 0, dy: -0.036, effect: 'brow' },
       { idx: 336, dx: 0, dy: -0.032, effect: 'brow' },
-      { idx: 13,  dx: 0, dy: -0.022, effect: 'smile' },
-      { idx: 14,  dx: 0, dy:  0.038, effect: 'smile' },
-      { idx: 17,  dx: 0, dy:  0.026, effect: 'smile' },
+      { idx: 13, dx: 0, dy: -0.022, effect: 'smile' },
+      { idx: 14, dx: 0, dy: 0.038, effect: 'smile' },
+      { idx: 17, dx: 0, dy: 0.026, effect: 'smile' },
     ],
   },
   happy: {
     label: 'Mutlu', icon: '😊', tintColor: '255,200,0', tintAlpha: 0.00,
     anchors: [
-      { idx: 61,  dx: -0.026, dy: -0.052, effect: 'smile' },
-      { idx: 291, dx:  0.026, dy: -0.052, effect: 'smile' },
-      { idx: 17,  dx:  0,     dy:  0.020, effect: 'smile' },
-      { idx: 123, dx:  0,     dy: -0.014, effect: 'slim' },
-      { idx: 352, dx:  0,     dy: -0.014, effect: 'slim' },
-      { idx: 145, dx:  0,     dy: -0.010, effect: 'slim' },
-      { idx: 374, dx:  0,     dy: -0.010, effect: 'slim' },
+      { idx: 61, dx: -0.026, dy: -0.052, effect: 'smile' },
+      { idx: 291, dx: 0.026, dy: -0.052, effect: 'smile' },
+      { idx: 17, dx: 0, dy: 0.020, effect: 'smile' },
+      { idx: 123, dx: 0, dy: -0.014, effect: 'slim' },
+      { idx: 352, dx: 0, dy: -0.014, effect: 'slim' },
+      { idx: 145, dx: 0, dy: -0.010, effect: 'slim' },
+      { idx: 374, dx: 0, dy: -0.010, effect: 'slim' },
     ],
   },
   disgusted: {
     label: 'İğrenmiş', icon: '🤢', tintColor: '40,160,50', tintAlpha: 0.00,
     anchors: [
-      { idx: 0,   dx:  0,      dy: -0.026, effect: 'smile' },
-      { idx: 12,  dx:  0,      dy: -0.020, effect: 'smile' },
-      { idx: 61,  dx: -0.016,  dy: -0.024, effect: 'smile' },
-      { idx: 291, dx:  0.006,  dy:  0.010, effect: 'smile' },
-      { idx: 70,  dx:  0,      dy: -0.024, effect: 'brow' },
-      { idx: 63,  dx:  0,      dy: -0.020, effect: 'brow' },
-      { idx: 105, dx:  0,      dy: -0.016, effect: 'brow' },
+      { idx: 0, dx: 0, dy: -0.026, effect: 'smile' },
+      { idx: 12, dx: 0, dy: -0.020, effect: 'smile' },
+      { idx: 61, dx: -0.016, dy: -0.024, effect: 'smile' },
+      { idx: 291, dx: 0.006, dy: 0.010, effect: 'smile' },
+      { idx: 70, dx: 0, dy: -0.024, effect: 'brow' },
+      { idx: 63, dx: 0, dy: -0.020, effect: 'brow' },
+      { idx: 105, dx: 0, dy: -0.016, effect: 'brow' },
     ],
   },
 };
@@ -262,8 +266,8 @@ const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
 };
 
 const GLASSES_NAMES = [
-  'Classic', 'Round', 'Square', 'Oval', 'Aviator', 'Retro', 'Thin Frame', 'Thick Frame', 
-  'Transparent', 'Colorful', 'Sunglasses', 'Sport', 'Vintage', 'Minimal', 'Cat Eye', 
+  'Classic', 'Round', 'Square', 'Oval', 'Aviator', 'Retro', 'Thin Frame', 'Thick Frame',
+  'Transparent', 'Colorful', 'Sunglasses', 'Sport', 'Vintage', 'Minimal', 'Cat Eye',
   'Geek', 'Night', 'Neon', 'Metal', 'Y2K', 'Soft', 'Crystal', 'Cyber', 'Chic', 'Urban'
 ];
 const GLASSES_VARIANTS = [
@@ -278,40 +282,40 @@ const GLASSES_VARIANTS = [
 ];
 
 const HAT_VARIANTS = [
-  { key: 'top-hat' as HatStyle,        label: 'Silindir',    color: '#1a0f00' },
-  { key: 'baseball-cap' as HatStyle,   label: 'Şapka',       color: '#224488' },
-  { key: 'cowboy-hat' as HatStyle,     label: 'Kovboy',      color: '#8b6914' },
-  { key: 'fox-hat' as HatStyle,        label: 'Tilki',       color: '#cc5500' },
-  { key: 'frog-hat' as HatStyle,       label: 'Kurbağa',     color: '#227722' },
-  { key: 'graduation-cap' as HatStyle, label: 'Mezuniyet',   color: '#111111' },
-  { key: 'headphones' as HatStyle,     label: 'Kulaklık',    color: '#333344' },
-  { key: 'pirate-hat' as HatStyle,     label: 'Korsan',      color: '#111122' },
-  { key: 'sombrero' as HatStyle,       label: 'Sombrero',    color: '#cc9900' },
-  { key: 'wizard-hat' as HatStyle,     label: 'Büyücü',      color: '#440088' },
-  { key: 'cat-ears' as HatStyle,       label: 'Kedi Kulağı', color: '#ffaacc' },
+  { key: 'top-hat' as HatStyle, label: 'Silindir', color: '#1a0f00' },
+  { key: 'baseball-cap' as HatStyle, label: 'Şapka', color: '#224488' },
+  { key: 'cowboy-hat' as HatStyle, label: 'Kovboy', color: '#8b6914' },
+  { key: 'fox-hat' as HatStyle, label: 'Tilki', color: '#cc5500' },
+  { key: 'frog-hat' as HatStyle, label: 'Kurbağa', color: '#227722' },
+  { key: 'graduation-cap' as HatStyle, label: 'Mezuniyet', color: '#111111' },
+  { key: 'headphones' as HatStyle, label: 'Kulaklık', color: '#333344' },
+  { key: 'pirate-hat' as HatStyle, label: 'Korsan', color: '#111122' },
+  { key: 'sombrero' as HatStyle, label: 'Sombrero', color: '#cc9900' },
+  { key: 'wizard-hat' as HatStyle, label: 'Büyücü', color: '#440088' },
+  { key: 'cat-ears' as HatStyle, label: 'Kedi Kulağı', color: '#ffaacc' },
 ];
 
 const EARRING_VARIANTS = [
-  { key: 'hoop-earrings' as EarringStyle,  label: 'Halka',    color: '#d4a030' },
-  { key: 'pearl-earrings' as EarringStyle, label: 'İnci',     color: '#f0f0f0' },
-  { key: 'diamond-studs' as EarringStyle,  label: 'Elmas',    color: '#aaddff' },
+  { key: 'hoop-earrings' as EarringStyle, label: 'Halka', color: '#d4a030' },
+  { key: 'pearl-earrings' as EarringStyle, label: 'İnci', color: '#f0f0f0' },
+  { key: 'diamond-studs' as EarringStyle, label: 'Elmas', color: '#aaddff' },
 ];
 
 const NECKLACE_VARIANTS = [
-  { key: 'necklace' as NecklaceStyle,       label: 'Kolye',  color: '#d4a030' },
-  { key: 'pearl-necklace' as NecklaceStyle, label: 'İnci',   color: '#f0f0f0' },
+  { key: 'necklace' as NecklaceStyle, label: 'Kolye', color: '#d4a030' },
+  { key: 'pearl-necklace' as NecklaceStyle, label: 'İnci', color: '#f0f0f0' },
 ];
 
 const TIE_VARIANTS = [
   { key: 'necktie' as TieStyle, label: 'Kravat', color: '#1a1a1a' },
-  { key: 'bowtie' as TieStyle,  label: 'Papyon', color: '#882222' },
+  { key: 'bowtie' as TieStyle, label: 'Papyon', color: '#882222' },
 ];
 
 const MASK_VARIANTS = [
-  { key: 'clown-mask' as MaskStyle, label: 'Palyaço',  color: '#cc2222' },
-  { key: 'fox-head'   as MaskStyle, label: 'Tilki',    color: '#cc6600' },
-  { key: 'anon-mask'  as MaskStyle, label: 'Anonim',   color: '#222244' },
-  { key: 'gas-mask'   as MaskStyle, label: 'Gaz Mask', color: '#334433' },
+  { key: 'clown-mask' as MaskStyle, label: 'Palyaço', color: '#cc2222' },
+  { key: 'fox-head' as MaskStyle, label: 'Tilki', color: '#cc6600' },
+  { key: 'anon-mask' as MaskStyle, label: 'Anonim', color: '#222244' },
+  { key: 'gas-mask' as MaskStyle, label: 'Gaz Mask', color: '#334433' },
 ];
 
 const GRID_N = 18;
@@ -813,9 +817,9 @@ function drawAngryEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W:
   // Red skin flush across cheeks and forehead
   ctx.globalCompositeOperation = 'multiply';
   const flush = ctx.createRadialGradient(cx, cy * 0.94, 0, cx, cy * 0.94, Math.max(faceW, faceH) * 0.58);
-  flush.addColorStop(0,   'rgba(210,55,55,0.32)');
-  flush.addColorStop(0.55,'rgba(195,45,45,0.16)');
-  flush.addColorStop(1,   'rgba(0,0,0,0)');
+  flush.addColorStop(0, 'rgba(210,55,55,0.32)');
+  flush.addColorStop(0.55, 'rgba(195,45,45,0.16)');
+  flush.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = flush;
   ctx.beginPath();
   ctx.ellipse(cx, cy * 0.94, faceW * 0.54, faceH * 0.56, 0, 0, Math.PI * 2);
@@ -842,9 +846,9 @@ function drawSadEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: n
     const oy = end.y * H;
     const tearLen = faceH * (0.30 + 0.06 * Math.sin(frame * 0.025 + startIdx));
     const grad = ctx.createLinearGradient(ox, oy, ox + faceW * 0.012, oy + tearLen);
-    grad.addColorStop(0,   'rgba(140,175,255,0.80)');
-    grad.addColorStop(0.55,'rgba(120,160,255,0.50)');
-    grad.addColorStop(1,   'rgba(100,145,255,0)');
+    grad.addColorStop(0, 'rgba(140,175,255,0.80)');
+    grad.addColorStop(0.55, 'rgba(120,160,255,0.50)');
+    grad.addColorStop(1, 'rgba(100,145,255,0)');
     ctx.strokeStyle = grad;
     ctx.lineWidth = faceW * 0.014;
     ctx.lineCap = 'round';
@@ -873,8 +877,8 @@ function drawSadEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: n
     const ex = ep.x * W;
     const ey = (ep.y + 0.014) * H;
     const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, faceW * 0.10);
-    g.addColorStop(0,   'rgba(180,90,90,0.20)');
-    g.addColorStop(1,   'rgba(180,90,90,0)');
+    g.addColorStop(0, 'rgba(180,90,90,0.20)');
+    g.addColorStop(1, 'rgba(180,90,90,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.ellipse(ex, ey, faceW * 0.10, faceH * 0.042, 0, 0, Math.PI * 2);
@@ -903,9 +907,9 @@ function drawSurprisedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[]
     const ey = ep.y * H;
     const pulse = 0.7 + 0.3 * Math.abs(Math.sin(frame * 0.08 + irisIdx));
     const g = ctx.createRadialGradient(ex - faceW * 0.015, ey - faceH * 0.012, 0, ex, ey, faceW * 0.055);
-    g.addColorStop(0,   `rgba(255,255,255,${0.65 * pulse})`);
-    g.addColorStop(0.35,`rgba(255,255,220,${0.28 * pulse})`);
-    g.addColorStop(1,   'rgba(255,255,255,0)');
+    g.addColorStop(0, `rgba(255,255,255,${0.65 * pulse})`);
+    g.addColorStop(0.35, `rgba(255,255,220,${0.28 * pulse})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.ellipse(ex, ey, faceW * 0.055, faceW * 0.055, 0, 0, Math.PI * 2);
@@ -916,10 +920,10 @@ function drawSurprisedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[]
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = 'rgba(255,240,100,0.90)';
   const sparkPositions = [
-    { baseIdx: 70,  dx: -0.06, dy: -0.08 },
-    { baseIdx: 63,  dx:  0.00, dy: -0.11 },
-    { baseIdx: 300, dx:  0.06, dy: -0.08 },
-    { baseIdx: 293, dx:  0.00, dy: -0.11 },
+    { baseIdx: 70, dx: -0.06, dy: -0.08 },
+    { baseIdx: 63, dx: 0.00, dy: -0.11 },
+    { baseIdx: 300, dx: 0.06, dy: -0.08 },
+    { baseIdx: 293, dx: 0.00, dy: -0.11 },
   ];
   for (const sp of sparkPositions) {
     const base = lm[sp.baseIdx];
@@ -936,8 +940,8 @@ function drawSurprisedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[]
   ctx.globalCompositeOperation = 'screen';
   ctx.globalAlpha = 1;
   const glow = ctx.createRadialGradient(cx, face.minY * H + faceH * 0.14, 0, cx, face.minY * H + faceH * 0.14, faceW * 0.38);
-  glow.addColorStop(0,   'rgba(255,250,200,0.16)');
-  glow.addColorStop(1,   'rgba(255,250,200,0)');
+  glow.addColorStop(0, 'rgba(255,250,200,0.16)');
+  glow.addColorStop(1, 'rgba(255,250,200,0)');
   ctx.fillStyle = glow;
   ctx.beginPath();
   ctx.ellipse(cx, face.minY * H + faceH * 0.14, faceW * 0.42, faceH * 0.16, 0, 0, Math.PI * 2);
@@ -966,9 +970,9 @@ function drawHappyEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W:
     const px = rx * W;
     const py = ry * H;
     const g = ctx.createRadialGradient(px, py, 0, px, py, faceW * 0.15);
-    g.addColorStop(0,   'rgba(255,90,105,0.40)');
-    g.addColorStop(0.55,'rgba(255,110,115,0.16)');
-    g.addColorStop(1,   'rgba(255,90,105,0)');
+    g.addColorStop(0, 'rgba(255,90,105,0.40)');
+    g.addColorStop(0.55, 'rgba(255,110,115,0.16)');
+    g.addColorStop(1, 'rgba(255,90,105,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.ellipse(px, py, faceW * 0.16, faceH * 0.092, 0, 0, Math.PI * 2);
@@ -981,8 +985,8 @@ function drawHappyEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W:
   const riseMax = faceH * 0.75;                          // max rise = 75% of face height
   for (const [oxF, spd, sizeF] of [
     [-0.26, 0.020, 0.88],
-    [ 0.26, 0.016, 0.70],
-    [ 0.02, 0.028, 0.52],
+    [0.26, 0.016, 0.70],
+    [0.02, 0.028, 0.52],
   ] as [number, number, number][]) {
     const phase = (frame * spd) % 1;
     const hx = cx + oxF * faceW + Math.sin(frame * 0.05 + spd * 18) * faceW * 0.035;
@@ -1009,9 +1013,9 @@ function drawDisgustedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[]
   // Green-tinted skin gradient on face only
   ctx.globalCompositeOperation = 'multiply';
   const greenFlush = ctx.createRadialGradient(cx, cy * 0.96, 0, cx, cy * 0.96, Math.max(faceW, faceH) * 0.56);
-  greenFlush.addColorStop(0,   'rgba(100,200,90,0.28)');
-  greenFlush.addColorStop(0.55,'rgba(90,185,80,0.14)');
-  greenFlush.addColorStop(1,   'rgba(0,0,0,0)');
+  greenFlush.addColorStop(0, 'rgba(100,200,90,0.28)');
+  greenFlush.addColorStop(0.55, 'rgba(90,185,80,0.14)');
+  greenFlush.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = greenFlush;
   ctx.beginPath();
   ctx.ellipse(cx, cy * 0.96, faceW * 0.52, faceH * 0.56, 0, 0, Math.PI * 2);
@@ -1024,8 +1028,8 @@ function drawDisgustedEffects(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[]
   if (forehead) {
     for (const [oxF, spd, phase0] of [
       [-0.16, 0.018, 0.0],
-      [ 0.06, 0.024, 0.3],
-      [ 0.24, 0.014, 0.6],
+      [0.06, 0.024, 0.3],
+      [0.24, 0.014, 0.6],
     ] as [number, number, number][]) {
       const phase = ((frame * spd + phase0)) % 1;
       const sx = forehead.x * W + oxF * faceW;
@@ -1073,6 +1077,129 @@ function drawHeart2(ctx: CanvasRenderingContext2D, cx: number, cy: number, s: nu
   ctx.fill();
 }
 
+const renderThumbnail = async (url: string, isObj: boolean, mtlUrl?: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (url === 'sombrero') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setPixelRatio(1);
+      renderer.setSize(128, 128);
+      renderer.setClearColor(0x000000, 0);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      camera.position.set(0, 0.6, 3.2);
+      camera.lookAt(new THREE.Vector3(0, 0.35, 0));
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+      const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
+      dirLight1.position.set(2, 4, 3);
+      scene.add(ambientLight, dirLight1);
+
+      const model = new THREE.Group();
+      const mkMat = (c: number) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.78 });
+      const tan = 0xc4891a;
+      const dark = 0x1a0900;
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(1.50, 1.50, 0.07, 64), mkMat(tan));
+      brim.position.y = 0.035;
+      const crownLow = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.80, 0.80, 32), mkMat(tan));
+      crownLow.position.y = 0.47;
+      const crownTop = new THREE.Mesh(new THREE.SphereGeometry(0.52, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.55), mkMat(tan));
+      crownTop.position.y = 0.87;
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.70, 0.04, 8, 48), mkMat(dark));
+      band.rotation.x = Math.PI / 2; band.position.y = 0.12;
+      model.add(brim, crownLow, crownTop, band);
+
+      model.rotation.y = Math.PI / 6;
+      model.rotation.x = Math.PI / 12;
+      scene.add(model);
+
+      renderer.render(scene, camera);
+      const dataUrl = canvas.toDataURL('image/png');
+      renderer.dispose();
+      resolve(dataUrl);
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(128, 128);
+    renderer.setClearColor(0x000000, 0);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.set(0, 0, 8);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
+    dirLight1.position.set(2, 4, 3);
+    const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+    dirLight2.position.set(-2, -2, 3);
+    scene.add(ambientLight, dirLight1, dirLight2);
+
+    const loadAndRender = (model: THREE.Object3D) => {
+      model.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m) => {
+              m.side = THREE.DoubleSide;
+              m.needsUpdate = true;
+            });
+          } else if (child.material) {
+            child.material.side = THREE.DoubleSide;
+            child.material.needsUpdate = true;
+          }
+        }
+      });
+
+      model.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center);
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = camera.fov * (Math.PI / 180);
+      let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+      cameraZ *= 1.4; // Padding
+      camera.position.z = cameraZ;
+      camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+      model.rotation.y = Math.PI / 6;
+      model.rotation.x = Math.PI / 18;
+
+      scene.add(model);
+      renderer.render(scene, camera);
+      const dataUrl = canvas.toDataURL('image/png');
+      scene.remove(model);
+      renderer.dispose();
+      resolve(dataUrl);
+    };
+
+    if (isObj && mtlUrl) {
+      const mtlLoader = new MTLLoader();
+      mtlLoader.load(mtlUrl, (materials) => {
+        materials.preload();
+        const objLoader = new OBJLoader();
+        objLoader.setMaterials(materials);
+        objLoader.load(url, (obj) => {
+          loadAndRender(obj);
+        }, undefined, () => { renderer.dispose(); resolve(''); });
+      }, undefined, () => { renderer.dispose(); resolve(''); });
+    } else {
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.load(url, (gltf) => {
+        loadAndRender(gltf.scene);
+      }, undefined, () => { renderer.dispose(); resolve(''); });
+    }
+  });
+};
+
 type LiveWarpCameraProps = {
   onCapture?: (dataUrl: string, width: number, height: number) => void;
   isDark?: boolean;
@@ -1101,6 +1228,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const [message, setMessage] = useState('Hazır. Başlat butonuna bas.');
   const [showLandmarks, setShowLandmarks] = useState(false);
   const [fps, setFps] = useState(0);
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [activeProOperations, setActiveProOperations] = useState<ProLiveOperation[]>([]);
   const [proOperationIntensity, setProOperationIntensity] = useState<Record<ProLiveOperation, number>>({
     smile_enhancement: LAB_DEFAULT_INTENSITY,
@@ -1137,6 +1265,76 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const activeEmotionRef = useRef<EmotionId | null>(null);
   const emotionFrameRef = useRef(0);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !activeCategory) return;
+
+    let active = true;
+
+    const generate = async () => {
+      let variants: { key: string; url?: string; isObj?: boolean; mtlUrl?: string }[] = [];
+
+      if (activeCategory === 'glasses') {
+        variants = GLASSES_VARIANTS.map(v => ({
+          key: v.key,
+          url: GLB_URLS[v.key as GlassesStyle]
+        }));
+      } else if (activeCategory === 'hat') {
+        variants = HAT_VARIANTS.map(v => ({
+          key: v.key,
+          url: v.key === 'sombrero' ? 'sombrero' : HAT_URLS[v.key as HatStyle]
+        }));
+      } else if (activeCategory === 'mask') {
+        variants = MASK_VARIANTS.map(v => ({
+          key: v.key,
+          url: MASK_URLS[v.key as MaskStyle]
+        }));
+      } else if (activeCategory === 'earrings') {
+        variants = EARRING_VARIANTS.map(v => ({
+          key: v.key,
+          url: EARRING_URLS[v.key as EarringStyle]
+        }));
+      } else if (activeCategory === 'necklace') {
+        variants = NECKLACE_VARIANTS.map(v => ({
+          key: v.key,
+          url: NECKLACE_URLS[v.key as NecklaceStyle]
+        }));
+      } else if (activeCategory === 'tie') {
+        variants = TIE_VARIANTS.map(v => {
+          const config = TIE_URLS[v.key as TieStyle];
+          return {
+            key: v.key,
+            url: config.glb || config.obj,
+            isObj: !!config.obj,
+            mtlUrl: config.mtl
+          };
+        });
+      }
+
+      for (const v of variants) {
+        if (!active) break;
+        const cacheKey = `${activeCategory}_${v.key}`;
+        if (thumbnails[cacheKey]) continue;
+
+        if (v.url) {
+          try {
+            const dataUrl = await renderThumbnail(v.url, !!v.isObj, v.mtlUrl);
+            if (dataUrl && active) {
+              setThumbnails(prev => ({ ...prev, [cacheKey]: dataUrl }));
+            }
+          } catch (e) {
+            console.error('Failed to render thumbnail for', cacheKey, e);
+          }
+        }
+      }
+    };
+
+    void generate();
+
+    return () => {
+      active = false;
+    };
+  }, [activeCategory]);
+
   const handleAccessoryPress = (key: 'glasses' | 'hat' | 'earrings' | 'necklace' | 'tie' | 'mask') => {
     if (accessories[key]) {
       if (activeCategory === key) {
@@ -1155,28 +1353,58 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   };
 
   const changeGlassesStyle = (style: GlassesStyle) => {
-    setGlassesStyle(style);
-    arEngineRef.current?.setGlassesStyle(style);
+    if (accessories.glasses && glassesStyle === style) {
+      setAccessories(prev => ({ ...prev, glasses: false }));
+    } else {
+      setAccessories(prev => ({ ...prev, glasses: true }));
+      setGlassesStyle(style);
+      arEngineRef.current?.setGlassesStyle(style);
+    }
   };
   const changeHatStyle = (style: HatStyle) => {
-    setHatStyle(style);
-    arEngineRef.current?.setHatStyle(style);
+    if (accessories.hat && hatStyle === style) {
+      setAccessories(prev => ({ ...prev, hat: false }));
+    } else {
+      setAccessories(prev => ({ ...prev, hat: true }));
+      setHatStyle(style);
+      arEngineRef.current?.setHatStyle(style);
+    }
   };
   const changeEarringStyle = (style: EarringStyle) => {
-    setEarringStyle(style);
-    arEngineRef.current?.setEarringStyle(style);
+    if (accessories.earrings && earringStyle === style) {
+      setAccessories(prev => ({ ...prev, earrings: false }));
+    } else {
+      setAccessories(prev => ({ ...prev, earrings: true }));
+      setEarringStyle(style);
+      arEngineRef.current?.setEarringStyle(style);
+    }
   };
   const changeNecklaceStyle = (style: NecklaceStyle) => {
-    setNecklaceStyle(style);
-    arEngineRef.current?.setNecklaceStyle(style);
+    if (accessories.necklace && necklaceStyle === style) {
+      setAccessories(prev => ({ ...prev, necklace: false }));
+    } else {
+      setAccessories(prev => ({ ...prev, necklace: true }));
+      setNecklaceStyle(style);
+      arEngineRef.current?.setNecklaceStyle(style);
+    }
   };
   const changeTieStyle = (style: TieStyle) => {
-    setTieStyle(style);
-    arEngineRef.current?.setTieStyle(style);
+    if (accessories.tie && tieStyle === style) {
+      setAccessories(prev => ({ ...prev, tie: false }));
+    } else {
+      setAccessories(prev => ({ ...prev, tie: true }));
+      setTieStyle(style);
+      arEngineRef.current?.setTieStyle(style);
+    }
   };
   const changeMaskStyle = (style: MaskStyle) => {
-    setMaskStyle(style);
-    arEngineRef.current?.setMaskStyle(style);
+    if (accessories.mask && maskStyle === style) {
+      setAccessories(prev => ({ ...prev, mask: false }));
+    } else {
+      setAccessories(prev => ({ ...prev, mask: true }));
+      setMaskStyle(style);
+      arEngineRef.current?.setMaskStyle(style);
+    }
   };
   const intensitiesRef = useRef(intensities);
   const proRef = useRef({ operations: activeProOperations, intensities: proOperationIntensity, smooth: LAB_SMOOTH });
@@ -1631,7 +1859,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const capture = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
+
     if (splitScreen) {
       // Split screen mode'da sadece sağ taraf (efektli) capture et
       const tempCanvas = document.createElement('canvas');
@@ -1667,6 +1895,8 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
     setMakeupTarget('lip');
     setMakeupProfiles(DEFAULT_MAKEUP_PROFILE);
     setMakeupEnabled(false);
+    setAccessories({ glasses: false, hat: false, earrings: false, necklace: false, tie: false, mask: false });
+    setActiveCategory(null);
     agingPreviewImageRef.current = null;
     smoothedLandmarksRef.current = null;
   };
@@ -1859,12 +2089,12 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
             </View>
             <View style={styles.accessoryRow}>
               {([
-                { key: 'glasses',  label: 'Gözlük', icon: '👓' },
-                { key: 'hat',      label: 'Şapka',  icon: '🎩' },
-                { key: 'mask',     label: 'Maske',  icon: '🎭' },
-                { key: 'earrings', label: 'Küpe',   icon: '💎' },
-                { key: 'necklace', label: 'Kolye',  icon: '📿' },
-                { key: 'tie',      label: 'Kravat', icon: '👔' },
+                { key: 'glasses', label: 'Gözlük', icon: '👓' },
+                { key: 'hat', label: 'Şapka', icon: '🎩' },
+                { key: 'mask', label: 'Maske', icon: '🎭' },
+                { key: 'earrings', label: 'Küpe', icon: '💎' },
+                { key: 'necklace', label: 'Kolye', icon: '📿' },
+                { key: 'tie', label: 'Kravat', icon: '👔' },
               ] as const).map(({ key, label, icon }) => (
                 <Pressable
                   key={key}
@@ -1890,78 +2120,138 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
                 <View style={styles.variantsHeader}>
                   <Text style={[styles.variantsTitle, { color: text }]}>
                     {activeCategory === 'glasses' ? '👓 Gözlük Stilleri' :
-                     activeCategory === 'hat' ? '🎩 Şapka Stilleri' :
-                     activeCategory === 'mask' ? '🎭 Maske Stilleri' :
-                     activeCategory === 'earrings' ? '💎 Küpe Stilleri' :
-                     activeCategory === 'necklace' ? '📿 Kolye Stilleri' :
-                     '👔 Kravat & Papyon Stilleri'}
+                      activeCategory === 'hat' ? '🎩 Şapka Stilleri' :
+                        activeCategory === 'mask' ? '🎭 Maske Stilleri' :
+                          activeCategory === 'earrings' ? '💎 Küpe Stilleri' :
+                            activeCategory === 'necklace' ? '📿 Kolye Stilleri' :
+                              '👔 Kravat & Papyon Stilleri'}
                   </Text>
                 </View>
-                <ScrollView 
-                  style={{ maxHeight: 250 }} 
+                <ScrollView
+                  style={{ maxHeight: 250 }}
                   contentContainerStyle={styles.variantsGrid}
                   showsVerticalScrollIndicator={true}
                   nestedScrollEnabled={true}>
-                  
-                  {activeCategory === 'glasses' && GLASSES_VARIANTS.map(({ key, label, color }) => (
-                    <Pressable key={key} onPress={() => changeGlassesStyle(key)}
-                      style={[styles.variantButton, {
-                        backgroundColor: glassesStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: glassesStyle === key ? accent : panelBorder }]}>
-                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
-                      <Text style={[styles.variantLabel, { color: glassesStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
-                    </Pressable>
-                  ))}
 
-                  {activeCategory === 'hat' && HAT_VARIANTS.map(({ key, label, color }) => (
-                    <Pressable key={key} onPress={() => changeHatStyle(key)}
-                      style={[styles.variantButton, {
-                        backgroundColor: hatStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: hatStyle === key ? accent : panelBorder }]}>
-                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
-                      <Text style={[styles.variantLabel, { color: hatStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
-                    </Pressable>
-                  ))}
+                  {activeCategory === 'glasses' && GLASSES_VARIANTS.map(({ key, label, color }) => {
+                    const isSelected = accessories.glasses && glassesStyle === key;
+                    const cacheKey = `glasses_${key}`;
+                    const thumbUrl = thumbnails[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => changeGlassesStyle(key)}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: isSelected ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
 
-                  {activeCategory === 'mask' && MASK_VARIANTS.map(({ key, label, color }) => (
-                    <Pressable key={key} onPress={() => changeMaskStyle(key)}
-                      style={[styles.variantButton, {
-                        backgroundColor: maskStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: maskStyle === key ? accent : panelBorder }]}>
-                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
-                      <Text style={[styles.variantLabel, { color: maskStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
-                    </Pressable>
-                  ))}
+                  {activeCategory === 'hat' && HAT_VARIANTS.map(({ key, label, color }) => {
+                    const isSelected = accessories.hat && hatStyle === key;
+                    const cacheKey = `hat_${key}`;
+                    const thumbUrl = thumbnails[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => changeHatStyle(key)}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: isSelected ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
 
-                  {activeCategory === 'earrings' && EARRING_VARIANTS.map(({ key, label, color }) => (
-                    <Pressable key={key} onPress={() => changeEarringStyle(key)}
-                      style={[styles.variantButton, {
-                        backgroundColor: earringStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: earringStyle === key ? accent : panelBorder }]}>
-                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
-                      <Text style={[styles.variantLabel, { color: earringStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
-                    </Pressable>
-                  ))}
+                  {activeCategory === 'mask' && MASK_VARIANTS.map(({ key, label, color }) => {
+                    const isSelected = accessories.mask && maskStyle === key;
+                    const cacheKey = `mask_${key}`;
+                    const thumbUrl = thumbnails[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => changeMaskStyle(key)}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: isSelected ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
 
-                  {activeCategory === 'necklace' && NECKLACE_VARIANTS.map(({ key, label, color }) => (
-                    <Pressable key={key} onPress={() => changeNecklaceStyle(key)}
-                      style={[styles.variantButton, {
-                        backgroundColor: necklaceStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: necklaceStyle === key ? accent : panelBorder }]}>
-                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
-                      <Text style={[styles.variantLabel, { color: necklaceStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
-                    </Pressable>
-                  ))}
+                  {activeCategory === 'earrings' && EARRING_VARIANTS.map(({ key, label, color }) => {
+                    const isSelected = accessories.earrings && earringStyle === key;
+                    const cacheKey = `earrings_${key}`;
+                    const thumbUrl = thumbnails[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => changeEarringStyle(key)}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: isSelected ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
 
-                  {activeCategory === 'tie' && TIE_VARIANTS.map(({ key, label, color }) => (
-                    <Pressable key={key} onPress={() => changeTieStyle(key)}
-                      style={[styles.variantButton, {
-                        backgroundColor: tieStyle === key ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                        borderColor: tieStyle === key ? accent : panelBorder }]}>
-                      <View style={[styles.variantColorThumb, { backgroundColor: color }]} />
-                      <Text style={[styles.variantLabel, { color: tieStyle === key ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
-                    </Pressable>
-                  ))}
+                  {activeCategory === 'necklace' && NECKLACE_VARIANTS.map(({ key, label, color }) => {
+                    const isSelected = accessories.necklace && necklaceStyle === key;
+                    const cacheKey = `necklace_${key}`;
+                    const thumbUrl = thumbnails[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => changeNecklaceStyle(key)}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: isSelected ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {activeCategory === 'tie' && TIE_VARIANTS.map(({ key, label, color }) => {
+                    const isSelected = accessories.tie && tieStyle === key;
+                    const cacheKey = `tie_${key}`;
+                    const thumbUrl = thumbnails[cacheKey];
+                    return (
+                      <Pressable key={key} onPress={() => changeTieStyle(key)}
+                        style={[styles.variantButton, {
+                          backgroundColor: isSelected ? 'rgba(160,32,240,0.30)' : isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          borderColor: isSelected ? accent : panelBorder
+                        }]}>
+                        {thumbUrl ? (
+                          <Image source={{ uri: thumbUrl }} style={styles.variantImage} resizeMode="contain" />
+                        ) : (
+                          <View style={styles.variantImagePlaceholder} />
+                        )}
+                        <Text style={[styles.variantLabel, { color: isSelected ? '#fff' : text }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
                 </ScrollView>
               </View>
             )}
@@ -2642,6 +2932,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderRadius: 12,
     borderWidth: 1.5,
+  },
+  variantImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  variantImagePlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   variantColorThumb: {
     width: 16,
