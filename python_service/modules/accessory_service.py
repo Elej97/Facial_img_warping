@@ -165,6 +165,41 @@ def _composite_rgba(
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def _warp_asset_to_quad(
+    image_bgr: np.ndarray,
+    asset_bgra: np.ndarray,
+    dst_quad: np.ndarray,
+    opacity: float,
+) -> np.ndarray:
+    """Perspective-warp asset onto a 4-point face-aligned quad (TL, TR, BR, BL)."""
+    h, w = image_bgr.shape[:2]
+    ah, aw = asset_bgra.shape[:2]
+    src = np.array([[0, 0], [aw, 0], [aw, ah], [0, ah]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, dst_quad.astype(np.float32))
+    warped = cv2.warpPerspective(
+        asset_bgra, M, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0),
+    )
+    alpha = np.clip(warped[:, :, 3].astype(np.float32) / 255.0, 0.0, 1.0)
+    alpha = alpha * float(np.clip(opacity, 0.0, 1.0))
+    a3 = alpha[:, :, None]
+    out = image_bgr.astype(np.float32)
+    return np.clip(out * (1 - a3) + warped[:, :, :3].astype(np.float32) * a3, 0, 255).astype(np.uint8)
+
+
+def _face_axis(p_left: np.ndarray, p_right: np.ndarray):
+    """Return (dx_unit, dy_unit, span) for a left→right landmark pair."""
+    dx = p_right - p_left
+    span = float(np.linalg.norm(dx))
+    if span < 4:
+        return None, None, 0.0
+    dx_unit = dx / span
+    dy_unit = np.array([-dx_unit[1], dx_unit[0]], dtype=np.float32)  # ⊥, points down in image
+    return dx_unit, dy_unit, span
+
+
 def _load_hat_asset(path: Path) -> np.ndarray | None:
     if not path.exists():
         return None
@@ -248,47 +283,35 @@ def _draw_hat(
 ) -> np.ndarray:
     h, w = image_np.shape[:2]
 
-    # Forehead top anchor (landmark 10 in MediaPipe 468-point mesh)
-    forehead = _point_at(landmarks, 10, (w * 0.5, h * 0.18))
-    left_face = _point_at(landmarks, 234, (w * 0.28, h * 0.5))
-    right_face = _point_at(landmarks, 454, (w * 0.72, h * 0.5))
+    forehead = _point_at(landmarks, 10, (w * 0.5, h * 0.18)).astype(np.float32)
+    left_face = _point_at(landmarks, 234, (w * 0.28, h * 0.5)).astype(np.float32)
+    right_face = _point_at(landmarks, 454, (w * 0.72, h * 0.5)).astype(np.float32)
 
-    face_width = float(np.linalg.norm(right_face - left_face))
-    if face_width < 8:
+    dx_unit, dy_unit, face_width = _face_axis(left_face, right_face)
+    if dx_unit is None or face_width < 8:
         raise ValueError("Face landmarks are not reliable enough for hat placement.")
-
-    # Tilt angle from eye geometry
-    key = get_key_landmark_indices()
-    left_eye = _safe_points(landmarks, key["left_eye"])
-    right_eye = _safe_points(landmarks, key["right_eye"])
-    if len(left_eye) < 2 or len(right_eye) < 2:
-        angle = 0.0
-    else:
-        eye_delta = right_eye.mean(axis=0) - left_eye.mean(axis=0)
-        angle = math.degrees(math.atan2(float(eye_delta[1]), float(eye_delta[0])))
 
     asset = _load_hat_asset(_HAT_ASSETS.get(style, _HAT_ASSETS["cowboy"]))
     if asset is None:
         raise ValueError(f"Hat asset could not be loaded for style: {style}")
 
     asset_h, asset_w = asset.shape[:2]
-    # Hats are typically wider than the face
     width_factor = 1.55 if style == "asian" else 1.45
-    target_width = face_width * width_factor * scale
-    target_height = target_width * asset_h / asset_w
+    hat_half_w = face_width * width_factor * 0.5 * scale
+    hat_h = hat_half_w * 2 * (asset_h / asset_w)
 
-    # Place the hat above the forehead: center of the asset is target_height/2 above forehead
-    center = (
-        float(forehead[0] + offset_x),
-        float(forehead[1] - target_height * 0.48 + offset_y),
-    )
+    off = np.array([offset_x, offset_y], dtype=np.float32)
+    # Hat brim sits just below the forehead anchor; crown extends upward (−dy)
+    brim_center = forehead + off
+    bl = brim_center - dx_unit * hat_half_w
+    br = brim_center + dx_unit * hat_half_w
+    tl = bl - dy_unit * hat_h
+    tr = br - dy_unit * hat_h
 
-    return _composite_rgba(
+    return _warp_asset_to_quad(
         image_np,
         asset,
-        center=center,
-        target_width=target_width,
-        angle=angle,
+        np.array([tl, tr, br, bl], dtype=np.float32),
         opacity=0.78 + intensity * 0.22,
     )
 
@@ -331,28 +354,26 @@ def _draw_glasses(
     asset = _load_rgba_asset(_GLASSES_ASSETS.get(style, _GLASSES_ASSETS["classic"]))
     if asset is not None:
         asset = _tint_frame_pixels(asset, color_bgr)
-        midpoint = (geometry["left_center"] + geometry["right_center"]) * 0.5
-        eye_distance = geometry["eye_distance"]
-        center_y_bias = 0.10 if style == "heart" else 0.03
-        center = (
-            float(midpoint[0] + offset_x),
-            float(midpoint[1] + eye_distance * center_y_bias + offset_y),
-        )
-        if style == "heart":
-            width_factor = 2.70
-        elif style == "round":
-            width_factor = 2.24
-        else:
-            width_factor = 2.34
-        target_width = eye_distance * width_factor * scale
-        return _composite_rgba(
-            image_np,
-            asset,
-            center=center,
-            target_width=target_width,
-            angle=geometry["angle"],
-            opacity=0.66 + intensity * 0.34,
-        )
+        # Use outer eye corners (33, 263) as perspective anchors
+        left_outer = _point_at(landmarks, 33, tuple(geometry["left_center"])).astype(np.float32)
+        right_outer = _point_at(landmarks, 263, tuple(geometry["right_center"])).astype(np.float32)
+        dx_unit, dy_unit, span = _face_axis(left_outer, right_outer)
+        if dx_unit is not None and span >= 8:
+            temple_ext = span * (0.32 if style == "heart" else 0.26) * scale
+            v_half = span * (0.26 if style == "heart" else 0.21) * scale
+            v_shift = span * (0.10 if style == "heart" else 0.03)
+            off = np.array([offset_x, offset_y], dtype=np.float32)
+            shift = dy_unit * v_shift
+            tl = left_outer  - dx_unit * temple_ext - dy_unit * v_half + off + shift
+            tr = right_outer + dx_unit * temple_ext - dy_unit * v_half + off + shift
+            br = right_outer + dx_unit * temple_ext + dy_unit * v_half + off + shift
+            bl = left_outer  - dx_unit * temple_ext + dy_unit * v_half + off + shift
+            return _warp_asset_to_quad(
+                image_np,
+                asset,
+                np.array([tl, tr, br, bl], dtype=np.float32),
+                opacity=0.66 + intensity * 0.34,
+            )
 
     eye_distance = geometry["eye_distance"] * scale
     angle = geometry["angle"]
@@ -450,30 +471,32 @@ def _draw_mustache(
 
     asset = _load_rgba_asset(_MUSTACHE_ASSETS.get(style, _MUSTACHE_ASSETS["classic"]))
     if asset is not None:
-        angle = math.degrees(math.atan2(float(mouth_right[1] - mouth_left[1]), float(mouth_right[0] - mouth_left[0])))
-        if style == "chevron":
-            center = (
-                float((mouth_left[0] + mouth_right[0]) * 0.5 + offset_x),
-                float((upper_lip[1] * 0.28 + chin[1] * 0.72) + offset_y),
-            )
-            target_width = mouth_width * 2.62 * scale
-            opacity = 0.50 + intensity * 0.48
-        else:
-            center = (
-                float((mouth_left[0] + mouth_right[0]) * 0.5 + offset_x),
-                float((upper_lip[1] * 0.72 + nose_tip[1] * 0.28) + offset_y),
-            )
-            target_width = mouth_width * 1.46 * scale
-            opacity = 0.55 + intensity * 0.43
-
-        return _composite_rgba(
-            image_np,
-            asset,
-            center=center,
-            target_width=target_width,
-            angle=angle,
-            opacity=opacity,
+        dx_unit, dy_unit, span = _face_axis(
+            mouth_left.astype(np.float32), mouth_right.astype(np.float32)
         )
+        if dx_unit is not None and span >= 8:
+            asset_h, asset_w = asset.shape[:2]
+            if style == "chevron":
+                mst_half_w = span * 1.31 * scale
+                cy = float(upper_lip[1] * 0.28 + chin[1] * 0.72) + offset_y
+                opacity = 0.50 + intensity * 0.48
+            else:
+                mst_half_w = span * 0.73 * scale
+                cy = float(upper_lip[1] * 0.72 + nose_tip[1] * 0.28) + offset_y
+                opacity = 0.55 + intensity * 0.43
+            cx = float((mouth_left[0] + mouth_right[0]) * 0.5) + offset_x
+            mst_h = mst_half_w * 2 * (asset_h / asset_w)
+            center_pt = np.array([cx, cy], dtype=np.float32)
+            tl = center_pt - dx_unit * mst_half_w - dy_unit * (mst_h * 0.5)
+            tr = center_pt + dx_unit * mst_half_w - dy_unit * (mst_h * 0.5)
+            br = center_pt + dx_unit * mst_half_w + dy_unit * (mst_h * 0.5)
+            bl = center_pt - dx_unit * mst_half_w + dy_unit * (mst_h * 0.5)
+            return _warp_asset_to_quad(
+                image_np,
+                asset,
+                np.array([tl, tr, br, bl], dtype=np.float32),
+                opacity=opacity,
+            )
 
     center = np.array(
         [

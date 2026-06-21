@@ -349,7 +349,9 @@ async def expression_transfer(
         if reference_lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected in reference image."}
 
-        transferred = transfer_expression(target_img, target_lms, reference_lms, intensity=intensity)
+        transferred = transfer_expression(
+            target_img, target_lms, reference_lms, intensity=intensity, reference_image=reference_img
+        )
 
         return {
             "success": True,

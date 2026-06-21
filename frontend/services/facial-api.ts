@@ -74,7 +74,8 @@ function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
 }
 
 async function requestJson(endpoint: string, body: FormData): Promise<any> {
-  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+  const cleanEndpoint = endpoint.replace(/^\/api/, '');
+  const response = await fetch(`${API_BASE}${cleanEndpoint}`, { method: 'POST', body });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -113,7 +114,8 @@ async function requestDownload(endpoint: string, body: FormData, fallbackName: s
   filename: string;
   mimeType: string;
 }> {
-  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+  const cleanEndpoint = endpoint.replace(/^\/api/, '');
+  const response = await fetch(`${API_BASE}${cleanEndpoint}`, { method: 'POST', body });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -462,7 +464,7 @@ export type AccessoryStyle = 'classic' | 'round' | 'aviator' | 'heart' | 'handle
 
 export function accessoryAssetUrl(path: string): string {
   const normalized = path.replace(/^\/+/, '');
-  return `${API_BASE}/api/assets/accessories/${normalized}`;
+  return `${API_BASE}/assets/accessories/${normalized}`;
 }
 
 export async function applyAccessoryFromBase64(

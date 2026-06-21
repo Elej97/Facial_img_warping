@@ -418,46 +418,26 @@ def apply_pro_deaging(
     intensity: float = 0.6,
 ) -> dict:
     intensity = float(np.clip(intensity, 0.0, 1.0))
-    ycrcb = cv2.cvtColor(image_np, cv2.COLOR_BGR2YCrCb).astype(np.float32)
-    y = ycrcb[:, :, 0]
-
+    
+    # FR-4.4 / LearnOpenCV: Create a precise skin mask excluding eyes and mouth
     skin_mask = build_skin_mask(image_np, landmarks)
-
-    # FR-4.4: Reduce high-frequency skin components with multi-scale decomposition.
-    deaged_y = _wavelet_deaging_luma(y, skin_mask, intensity)
-
-    ycrcb[:, :, 0] = np.clip(deaged_y, 0, 255)
-    freq_smoothed = cv2.cvtColor(ycrcb.astype(np.uint8), cv2.COLOR_YCrCb2BGR)
-
-    # FR-4.5: Preserve important facial edges while smoothing using edge-preserving filter.
-    edge_pres = cv2.edgePreservingFilter(
-        src=image_np,
-        flags=1,
-        sigma_s=int(45 + 55 * intensity),
-        sigma_r=float(0.24 + 0.16 * intensity),
-    )
-
-    edge_gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
-    edge_map = cv2.Canny(edge_gray, 48, 132).astype(np.float32) / 255.0
-    edge_map = cv2.GaussianBlur(edge_map, (7, 7), 0)
-
-    skin = np.expand_dims(np.clip(skin_mask, 0.0, 1.0), axis=2)
-    edges = np.expand_dims(np.clip(edge_map, 0.0, 1.0), axis=2)
-
-    smooth_alpha = np.clip((0.58 + 0.34 * intensity) * (1.0 - edges), 0.0, 1.0)
-    smooth_alpha3 = skin * smooth_alpha
-
-    blended = freq_smoothed.astype(np.float32) * (1.0 - smooth_alpha3) + edge_pres.astype(np.float32) * smooth_alpha3
-
-    # FR-4.5: Add gentle bilateral pass only in skin to enhance rejuvenation while preserving edges.
-    bilateral = cv2.bilateralFilter(image_np, d=7, sigmaColor=35 + int(45 * intensity), sigmaSpace=30 + int(40 * intensity)).astype(np.float32)
-    bil_alpha = skin * (0.20 + 0.24 * intensity) * (1.0 - edges)
-    blended = blended * (1.0 - bil_alpha) + bilateral * bil_alpha
-
-    blended = blended * skin + image_np.astype(np.float32) * (1.0 - skin)
+    skin_mask_3c = np.expand_dims(skin_mask, axis=2)
+    
+    # 1. Bilateral Filter for Skin Smoothing
+    # This smooths wrinkles and blemishes while preserving facial structure and edges
+    d = int(7 + 8 * intensity)
+    sigma = int(40 + 50 * intensity)
+    smoothed = cv2.bilateralFilter(image_np, d=d, sigmaColor=sigma, sigmaSpace=sigma)
+    
+    # 2. Add Youthful Glow (Lightening & Contrast)
+    # Young skin is more radiant. We slightly increase brightness and contrast of the smoothed skin.
+    glow = cv2.convertScaleAbs(smoothed, alpha=1.0 + (0.08 * intensity), beta=8 * intensity)
+    
+    # 3. Blend smoothed & glowing skin with the original image using the skin mask
+    blended = glow.astype(np.float32) * skin_mask_3c + image_np.astype(np.float32) * (1.0 - skin_mask_3c)
     deaged = np.clip(blended, 0, 255).astype(np.uint8)
-
-    # 3 kanal Fourier
+    
+    # Generate FFT spectrums for the UI Visualization
     b, g, r = cv2.split(deaged)
     gray_ch = cv2.cvtColor(deaged, cv2.COLOR_BGR2GRAY)
     _, mag_gray = _fft_spectrum(gray_ch)

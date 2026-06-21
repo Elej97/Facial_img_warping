@@ -13,8 +13,14 @@ import numpy as np
 
 _VENDOR   = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vendor", "SAM"))
 _CKPT     = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "sam_ffhq_aging.pt"))
-_SIZE_IN  = 256
-_SIZE_OUT = 1024
+_SIZE_SAM_IN = 256          # SAM/pSp expects a 256px aligned input
+_SIZE        = 1024         # work + paste-back resolution = SAM's native 1024px output
+_F           = _SIZE / 256  # scale factor for kernels that were tuned at 256px
+
+
+def _odd(n):
+    n = max(1, int(round(n)))
+    return n if n % 2 == 1 else n + 1
 
 _FFHQ_REF = np.float32([
     [ 85.6,  78.0],
@@ -52,10 +58,11 @@ def _align_ffhq(img, lms):
         _lm_mean(lms, _MP_M_L),
         _lm_mean(lms, _MP_M_R),
     ])
-    M, _ = cv2.estimateAffinePartial2D(src, _FFHQ_REF, method=cv2.LMEDS)
+    ref = _FFHQ_REF * (_SIZE / 256.0)   # _FFHQ_REF is defined in a 256px frame; scale to work res
+    M, _ = cv2.estimateAffinePartial2D(src, ref, method=cv2.LMEDS)
     if M is None:
-        M = cv2.getAffineTransform(src[:3], _FFHQ_REF[:3])
-    aligned = cv2.warpAffine(img, M, (_SIZE_IN, _SIZE_IN),
+        M = cv2.getAffineTransform(src[:3], ref[:3])
+    aligned = cv2.warpAffine(img, M, (_SIZE, _SIZE),
                              flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
     M_inv = np.linalg.inv(np.vstack([M, [0, 0, 1]]))[:2]
     return aligned, M, M_inv
@@ -83,23 +90,24 @@ def _correct_sam_alignment(sam_256, orig_lms_aligned):
     scale = np.sqrt(M_corr[0, 0] ** 2 + M_corr[0, 1] ** 2)
     if scale < 0.75 or scale > 1.35:
         return sam_256
-    return cv2.warpAffine(sam_256, M_corr, (_SIZE_IN, _SIZE_IN),
+    return cv2.warpAffine(sam_256, M_corr, (_SIZE, _SIZE),
                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
 
 
 def _build_face_mask(lms_aligned):
     """Renk eşleştirmesi için — yüz merkezi (saç/göz hariç)."""
-    pts = np.clip(lms_aligned.astype(np.int32), 0, _SIZE_IN - 1)
+    pts = np.clip(lms_aligned.astype(np.int32), 0, _SIZE - 1)
     hull = cv2.convexHull(pts)
-    mask = np.zeros((_SIZE_IN, _SIZE_IN), np.uint8)
+    mask = np.zeros((_SIZE, _SIZE), np.uint8)
     cv2.fillConvexPoly(mask, hull, 255)
-    mask = cv2.erode(mask, np.ones((9, 9), np.uint8), iterations=4)
+    k = _odd(9 * _F)
+    mask = cv2.erode(mask, np.ones((k, k), np.uint8), iterations=4)
     return mask
 
 
 def _build_blend_mask(lms_aligned):
     """Alpha blend maskesi — yüz + biraz saç, yumuşak geçiş."""
-    pts = np.clip(lms_aligned.astype(np.int32), 0, _SIZE_IN - 1)
+    pts = np.clip(lms_aligned.astype(np.int32), 0, _SIZE - 1)
     hull_pts = cv2.convexHull(pts, returnPoints=True).reshape(-1, 2)
 
     x_min, x_max = hull_pts[:, 0].min(), hull_pts[:, 0].max()
@@ -117,28 +125,30 @@ def _build_blend_mask(lms_aligned):
     ], dtype=np.int32)
 
     all_pts = cv2.convexHull(np.vstack([hull_pts, extra]), returnPoints=True).reshape(-1, 1, 2)
-    mask = np.zeros((_SIZE_IN, _SIZE_IN), np.uint8)
+    mask = np.zeros((_SIZE, _SIZE), np.uint8)
     cv2.fillConvexPoly(mask, all_pts, 255)
-    mask = cv2.erode(mask, np.ones((7, 7), np.uint8), iterations=2)
-    mask = cv2.GaussianBlur(mask, (91, 91), 0)
+    k = _odd(7 * _F)
+    mask = cv2.erode(mask, np.ones((k, k), np.uint8), iterations=2)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=15 * _F)  # was (91,91) at 256px -> sigma-based at 1024
     return mask
 
 
 def _build_eye_exclusion(lms_aligned):
     """Göz+gözlük bölgesini blend maskesinden çıkarır."""
-    excl = np.zeros((_SIZE_IN, _SIZE_IN), np.uint8)
+    excl = np.zeros((_SIZE, _SIZE), np.uint8)
     for ids in [_MP_L_EYE_CONTOUR, _MP_R_EYE_CONTOUR]:
         pts = np.array(
-            [[int(np.clip(lms_aligned[i][0], 0, _SIZE_IN - 1)),
-              int(np.clip(lms_aligned[i][1], 0, _SIZE_IN - 1))]
+            [[int(np.clip(lms_aligned[i][0], 0, _SIZE - 1)),
+              int(np.clip(lms_aligned[i][1], 0, _SIZE - 1))]
              for i in ids if i < len(lms_aligned)],
             dtype=np.int32,
         )
         if len(pts) >= 3:
             hull = cv2.convexHull(pts.reshape(-1, 1, 2))
             cv2.fillConvexPoly(excl, hull, 255)
-    excl = cv2.dilate(excl, np.ones((15, 15), np.uint8), iterations=2)
-    excl = cv2.GaussianBlur(excl, (31, 31), 0)
+    k = _odd(15 * _F)
+    excl = cv2.dilate(excl, np.ones((k, k), np.uint8), iterations=2)
+    excl = cv2.GaussianBlur(excl, (0, 0), sigmaX=5 * _F)  # was (31,31) at 256px
     return excl
 
 
@@ -314,7 +324,7 @@ def apply_sam_aging(
     # 2. BGR → RGB PIL → tensor [-1, 1]
     pil_img   = PILImage.fromarray(cv2.cvtColor(aligned, cv2.COLOR_BGR2RGB))
     transform = T.Compose([
-        T.Resize((_SIZE_IN, _SIZE_IN)),
+        T.Resize((_SIZE_SAM_IN, _SIZE_SAM_IN)),  # SAM/pSp encoder input stays 256px
         T.ToTensor(),
         T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
     ])
@@ -324,17 +334,17 @@ def apply_sam_aging(
     age_transformer = AgeTransformer(target_age=int(target_age))
     input_with_age  = age_transformer(img_t).unsqueeze(0).float()
 
-    # 4. SAM inference → 1024×1024 → 256×256
+    # 4. SAM inference → native 1024×1024 (kept at full res — no 256 downscale)
     with torch.no_grad():
         result_batch = net(input_with_age, randomize_noise=False, resize=False)
 
     out_np  = result_batch[0].permute(1, 2, 0).cpu().numpy()
     out_np  = ((out_np + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
     out_bgr = cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR)
-    out_256 = cv2.resize(out_bgr, (_SIZE_IN, _SIZE_IN), interpolation=cv2.INTER_LINEAR)
+    aged = out_bgr if out_bgr.shape[0] == _SIZE else cv2.resize(out_bgr, (_SIZE, _SIZE), interpolation=cv2.INTER_LINEAR)
 
-    # 5. Korrektif landmark hizalaması
-    out_256 = _correct_sam_alignment(out_256, orig_lms_aligned)
+    # 5. Korrektif landmark hizalaması (1024px)
+    aged = _correct_sam_alignment(aged, orig_lms_aligned)
 
     # 6. Maskeler
     color_mask = _build_face_mask(orig_lms_aligned)
@@ -346,15 +356,15 @@ def apply_sam_aging(
         blend_mask.astype(np.int32) - eye_excl.astype(np.int32), 0, 255
     ).astype(np.uint8)
 
-    # 7. Renk eşleştirme
-    out_256 = _match_color(out_256, aligned, color_mask)
+    # 7. Renk eşleştirme (1024px)
+    aged = _match_color(aged, aligned, color_mask)
 
-    # 8. Intensity blend
+    # 8. Intensity blend (1024px)
     if intensity < 1.0:
-        out_256 = cv2.addWeighted(aligned, 1.0 - intensity, out_256, intensity, 0)
+        aged = cv2.addWeighted(aligned, 1.0 - intensity, aged, intensity, 0)
 
-    # 9. Orijinale yapıştır
-    result = _paste_back(image_np, out_256, M_inv, blend_mask)
+    # 9. Orijinale yapıştır (1024px aged crop -> original)
+    result = _paste_back(image_np, aged, M_inv, blend_mask)
 
     # 10. Saç grileştirme — orijinal boyutta, alın üstünde kesin sınırlı
     result = _gray_hair_on_original(result, landmarks)
