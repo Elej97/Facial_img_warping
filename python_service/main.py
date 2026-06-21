@@ -217,15 +217,28 @@ async def sam_guided_aging(
         if lms is None:
             return {"success": False, "message": "Yüz algılanamadı."}
 
+        # Anchor the target age to the person's ACTUAL age so the delta stays in a range
+        # SAM handles well. Extreme deltas (e.g. a child -> 72) make SAM drift/distort; a
+        # fixed auto target of 65 did exactly that on young faces.
+        src_age, _ = _estimate_age_from_image(img)
         if target_age < 0:
-            target_age = 65.0 if mode == "aging" else 20.0
+            # auto: relative to the source age, scaled by intensity
+            if mode == "aging":
+                target_age = src_age + 8.0 + 40.0 * intensity
+            else:
+                target_age = src_age - 6.0 - 28.0 * intensity
+        else:
+            # explicit (e.g. a UI age slider): cap how far from the source we go
+            target_age = float(np.clip(target_age, src_age - 42.0, src_age + 42.0))
+        target_age = float(np.clip(target_age, 15.0, 85.0))
 
         result = apply_sam_aging(img, lms, target_age=target_age, intensity=intensity)
 
         return {
             "success": True,
             "mode": mode,
-            "target_age": target_age,
+            "source_age": round(float(src_age), 1),
+            "target_age": round(float(target_age), 1),
             "intensity": intensity,
             "landmark_info": landmark_info,
             "result_image_b64": numpy_to_b64(result),
