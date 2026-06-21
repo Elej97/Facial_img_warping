@@ -504,7 +504,7 @@ export class AREngine {
     this.camera.top = H / 2; this.camera.bottom = -H / 2;
     this.camera.updateProjectionMatrix();
 
-    if (splitScreen) { this.renderer.setViewport(W, 0, W, H); this.renderer.setScissor(W, 0, W, H); this.renderer.setScissorTest(true); }
+    if (splitScreen) { this.renderer.setViewport(0, 0, W, H); this.renderer.setScissor(0, 0, W, H); this.renderer.setScissorTest(true); }
     else { this.renderer.setViewport(0, 0, W, H); this.renderer.setScissorTest(false); }
 
     const face = faceFrame(landmarks, W, H);
