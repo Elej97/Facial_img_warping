@@ -14,7 +14,7 @@ import { AREngine, GLB_URLS, HAT_URLS, EARRING_URLS, NECKLACE_URLS, TIE_URLS, MA
 export type EffectId = 'smile' | 'slim' | 'brow' | 'lip';
 
 type ProLiveOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'aging' | 'deaging';
-type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'brow' | 'eye' | 'teeth';
+type MakeupTarget = 'lip' | 'cheek' | 'bronzer' | 'lash' | 'eye' | 'teeth' | 'nail';
 type LandmarkPoint = { x: number; y: number; z?: number };
 type MakeupProfile = { active: boolean; color: string; intensity: number };
 
@@ -191,11 +191,11 @@ const PRO_EFFECT_MAP: Partial<Record<ProLiveOperation, EffectId>> = {
   slim_face: 'slim',
 };
 
-const LIVE_DETECT_INTERVAL_MS = 72;
+const LIVE_DETECT_INTERVAL_MS = 22;
 const LIVE_AGING_INTERVAL_MS = 3600;
 const LIVE_DEAGING_INTERVAL_MS = 4600;
 const LIVE_AGING_TIMEOUT_MS = 2800;
-const LIVE_LANDMARK_ALPHA = 0.72;
+const LIVE_LANDMARK_ALPHA = 0.18;
 const IRIS_LEFT = [468, 469, 470, 471, 472];
 const IRIS_RIGHT = [473, 474, 475, 476, 477];
 
@@ -207,30 +207,30 @@ const MAKEUP_PRESETS: { key: MakeupTarget; label: string; icon: keyof typeof Ion
   { key: 'lip', label: 'Ruj', icon: 'water-outline', defaultColor: '#D45A73' },
   { key: 'cheek', label: 'Allık', icon: 'ellipse-outline', defaultColor: '#F29AAF' },
   { key: 'bronzer', label: 'Bronzer', icon: 'sunny-outline', defaultColor: '#B97A4C' },
-  { key: 'lash', label: 'Eyeliner', icon: 'eye-outline', defaultColor: '#1D1D1F' },
-  { key: 'brow', label: 'Kaş', icon: 'remove-outline', defaultColor: '#5E4735' },
-  { key: 'eye', label: 'Göz Rengi', icon: 'eye-outline', defaultColor: '#8B4513' },
+  { key: 'lash', label: 'Far', icon: 'color-palette-outline', defaultColor: '#8E5CF7' },
+  { key: 'eye', label: 'Göz Rengi', icon: 'eye-outline', defaultColor: '#1C3A70' },
   { key: 'teeth', label: 'Diş Beyazlatma', icon: 'sparkles-outline', defaultColor: '#FFFFFF' },
+  { key: 'nail', label: 'Oje', icon: 'hand-left-outline', defaultColor: '#C2185B' },
 ];
 
 const MAKEUP_SWATCHES: Record<MakeupTarget, string[]> = {
   lip: ['#D45A73', '#A83253', '#F18FA7', '#BE4369', '#FF7AA2'],
   cheek: ['#F29AAF', '#F2B2A6', '#E88E7A', '#DB6F93', '#F7C1C8'],
   bronzer: ['#B97A4C', '#9F6642', '#D09A6B', '#7F5337', '#C88557'],
-  lash: ['#1D1D1F', '#2E2E33', '#505057'],
-  brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
-  eye: ['#8B4513', '#1C3A70', '#2F5233', '#704214', '#1A1A2E'],
+  lash: ['#8E5CF7', '#D86AD8', '#4ECDC4', '#5B8DEF', '#C9A227'],
+  eye: ['#1C3A70', '#2F5233', '#704214', '#6A4C93', '#1A1A2E'],
   teeth: ['#FFFFFF', '#F5F5F5', '#FFFACD', '#F0E68C', '#FAFAF0'],
+  nail: ['#C2185B', '#E91E63', '#8E24AA', '#111111', '#F5F5F5'],
 };
 
 const DEFAULT_MAKEUP_PROFILE: Record<MakeupTarget, MakeupProfile> = {
   lip: { active: false, color: '#D45A73', intensity: 0.48 },
   cheek: { active: false, color: '#F29AAF', intensity: 0.48 },
   bronzer: { active: false, color: '#B97A4C', intensity: 0.48 },
-  lash: { active: false, color: '#1D1D1F', intensity: 0.48 },
-  brow: { active: false, color: '#5E4735', intensity: 0.48 },
-  eye: { active: false, color: '#8B4513', intensity: 0.48 },
-  teeth: { active: false, color: '#FFFFFF', intensity: 0.48 },
+  lash: { active: false, color: '#8E5CF7', intensity: 0.48 },
+  eye: { active: false, color: '#1C3A70', intensity: 0.40 },
+  teeth: { active: false, color: '#FFFFFF', intensity: 0.28 },
+  nail: { active: false, color: '#C2185B', intensity: 0.70 },
 };
 
 const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
@@ -247,13 +247,10 @@ const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
     [454, 323, 361, 288, 397, 365, 379, 378, 400],
   ],
   lash: [
-    [33, 246, 161, 160, 159, 158, 157, 173, 133],
-    [263, 466, 388, 387, 386, 385, 384, 398, 362],
+    [226, 247, 30, 29, 27, 28, 56, 190, 243, 173, 157, 158, 159, 160, 161, 246, 33, 130],
+    [463, 414, 286, 258, 257, 259, 260, 467, 446, 359, 263, 466, 388, 387, 386, 385, 384, 398, 362],
   ],
-  brow: [
-    [70, 63, 105, 66, 107],
-    [300, 293, 334, 296, 336],
-  ],
+  nail: [],
   eye: [
     [33, 246, 161, 160, 159, 158, 157, 173, 133],
     [263, 466, 388, 387, 386, 385, 384, 398, 362],
@@ -262,6 +259,16 @@ const MAKEUP_PATHS: Record<MakeupTarget, number[][]> = {
     [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95],
   ],
 };
+
+const LIVE_BROW_PATHS = [
+  [70, 63, 105, 66, 107],
+  [300, 293, 334, 296, 336],
+];
+
+const LIVE_EYE_PATHS = [
+  [33, 246, 161, 160, 159, 158, 157, 173, 133],
+  [263, 466, 388, 387, 386, 385, 384, 398, 362],
+];
 
 const GLASSES_NAMES = [
   'Classic', 'Round', 'Square', 'Oval', 'Aviator', 'Retro', 'Thin Frame', 'Thick Frame',
@@ -508,70 +515,40 @@ function strokePath(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], path: nu
 
 function drawBrowMakeup(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
   const face = getFaceBounds(lm);
-  const lift = face.height * (0.013 + intensity * 0.008);
-  const thickness = face.height * (0.014 + intensity * 0.010);
+  const faceH = face.height * H;
 
   ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = hexToRgba(color, 0.45 + intensity * 0.22);
-  ctx.strokeStyle = hexToRgba(color, 0.80);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  for (const path of MAKEUP_PATHS.brow) {
-    const basePoints = path.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
-    if (basePoints.length < 3) {
-      continue;
-    }
-
-    ctx.beginPath();
-    basePoints.forEach((point, index) => {
-      const x = point.x * W;
-      const y = point.y * H;
-      if (index === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        const prev = basePoints[index - 1];
-        ctx.quadraticCurveTo(prev.x * W, prev.y * H, (prev.x * W + x) / 2, (prev.y * H + y) / 2);
-      }
-    });
-
-    for (let i = basePoints.length - 1; i >= 0; i--) {
-      const point = basePoints[i];
-      const liftFactor = lift + Math.sin((i / Math.max(1, basePoints.length - 1)) * Math.PI) * thickness * 0.45;
-      const x = point.x * W;
-      const y = point.y * H - liftFactor;
-      if (i === basePoints.length - 1) {
-        ctx.lineTo(x, y);
-      } else {
-        const prev = basePoints[i + 1];
-        const prevLift = lift + Math.sin(((i + 1) / Math.max(1, basePoints.length - 1)) * Math.PI) * thickness * 0.45;
-        ctx.quadraticCurveTo((prev.x * W + x) / 2, ((prev.y * H - prevLift) + y) / 2, x, y);
-      }
-    }
-
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.globalAlpha = 0.30 + intensity * 0.28;
-    ctx.lineWidth = 1.4 + intensity * 1.6;
+  for (const path of LIVE_BROW_PATHS) {
+    ctx.filter = `blur(${Math.max(2.5, faceH * 0.012)}px)`;
+    ctx.strokeStyle = hexToRgba(color, 0.22 + intensity * 0.26);
+    ctx.lineWidth = Math.max(5, faceH * (0.032 + intensity * 0.012));
     strokePath(ctx, lm, path, W, H);
-    ctx.globalAlpha = 1;
+
+    ctx.filter = 'none';
+    ctx.strokeStyle = hexToRgba(color, 0.10 + intensity * 0.16);
+    ctx.lineWidth = Math.max(1.4, faceH * 0.010);
+    strokePath(ctx, lm, path, W, H);
   }
 
+  ctx.filter = 'none';
   ctx.restore();
 }
 
 function drawEyeColor(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
   const eyes = [
-    { iris: IRIS_LEFT, fallback: MAKEUP_PATHS.eye[0], pupil: 468 },
-    { iris: IRIS_RIGHT, fallback: MAKEUP_PATHS.eye[1], pupil: 473 },
+    { iris: IRIS_LEFT, fallback: LIVE_EYE_PATHS[0] },
+    { iris: IRIS_RIGHT, fallback: LIVE_EYE_PATHS[1] },
   ];
 
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
 
-  for (const [index, eye] of eyes.entries()) {
+  for (const eye of eyes) {
     const iris = getIrisGeometry(lm, eye.iris, eye.fallback);
     const eyeBounds = getEyeBounds(lm, eye.fallback);
     if (!iris || !eyeBounds) {
@@ -579,39 +556,97 @@ function drawEyeColor(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: num
     }
 
     const darkIris = isVeryDarkHex(color);
-
-    const eyeShift = index === 0 ? -0.012 : -0.034;
     const cx = clamp(
-      iris.center.x + eyeShift,
-      eyeBounds.center.x - eyeBounds.width * 0.10,
+      iris.center.x - eyeBounds.width * 0.075,
+      eyeBounds.center.x - eyeBounds.width * 0.30,
       eyeBounds.center.x + eyeBounds.width * 0.18,
     ) * W;
-    const cy = clamp(iris.center.y, eyeBounds.center.y - eyeBounds.height * 0.18, eyeBounds.center.y + eyeBounds.height * 0.18) * H;
-    const irisRadius = iris.radius * Math.min(W, H) * (darkIris ? 1.74 + intensity * 0.08 : 1.58 + intensity * 0.10);
-    const eyeCap = Math.min(eyeBounds.width * W * (darkIris ? 0.34 : 0.30), eyeBounds.height * H * (darkIris ? 0.48 : 0.44));
-    const outerRadius = Math.max(4, Math.min(irisRadius, eyeCap));
-    const innerRadius = Math.max(2, outerRadius * (darkIris ? 0.07 + intensity * 0.008 : 0.10 + intensity * 0.010));
+    const cy = clamp(
+      iris.center.y + eyeBounds.height * 0.055,
+      eyeBounds.center.y - eyeBounds.height * 0.10,
+      eyeBounds.center.y + eyeBounds.height * 0.30,
+    ) * H;
+    const irisRadius = iris.radius * Math.min(W, H) * (darkIris ? 1.62 + intensity * 0.12 : 1.52 + intensity * 0.10);
+    const eyeCapX = eyeBounds.width * W * 0.26;
+    const eyeCapY = eyeBounds.height * H * 0.46;
+    const outerRadius = Math.max(4.5, Math.min(irisRadius, eyeCapX, eyeCapY));
+    const innerRadius = Math.max(1.8, outerRadius * (darkIris ? 0.18 : 0.20));
 
     ctx.save();
     ctx.beginPath();
-    ctx.ellipse(cx, cy, outerRadius, outerRadius * 1.02, 0, 0, Math.PI * 2);
-    ctx.ellipse(cx, cy, innerRadius, innerRadius * 1.02, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, outerRadius, outerRadius * 0.88, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, innerRadius, innerRadius * 0.88, 0, 0, Math.PI * 2);
     ctx.clip('evenodd');
 
     const ring = ctx.createRadialGradient(cx, cy, innerRadius * 0.85, cx, cy, outerRadius);
     ring.addColorStop(0, 'rgba(0,0,0,0)');
-    ring.addColorStop(0.22, hexToRgba(color, darkIris ? 0.38 + intensity * 0.08 : 0.26 + intensity * 0.08));
-    ring.addColorStop(0.58, hexToRgba(color, darkIris ? 0.90 + intensity * 0.04 : 0.72 + intensity * 0.06));
-    ring.addColorStop(1, hexToRgba(color, darkIris ? 0.99 : 0.96));
+    ring.addColorStop(0.24, hexToRgba(color, darkIris ? 0.28 + intensity * 0.07 : 0.22 + intensity * 0.06));
+    ring.addColorStop(0.66, hexToRgba(color, darkIris ? 0.64 + intensity * 0.08 : 0.54 + intensity * 0.08));
+    ring.addColorStop(1, hexToRgba(color, darkIris ? 0.78 : 0.72));
 
-    ctx.globalCompositeOperation = darkIris ? 'source-over' : 'soft-light';
-    ctx.globalAlpha = darkIris ? 0.90 : 0.96;
+    ctx.globalCompositeOperation = darkIris ? 'source-atop' : 'soft-light';
+    ctx.globalAlpha = darkIris ? 0.68 : 0.78;
     ctx.fillStyle = ring;
     ctx.fillRect(cx - outerRadius, cy - outerRadius, outerRadius * 2, outerRadius * 2);
 
     ctx.restore();
   }
 
+  ctx.restore();
+}
+
+function drawTeethWhitening(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
+  const innerMouth = MAKEUP_PATHS.teeth[0];
+  const points = innerMouth.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  const left = lm[78];
+  const right = lm[308];
+  const top = lm[13];
+  const bottom = lm[14];
+
+  if (points.length < 8 || !left || !right || !top || !bottom) {
+    return;
+  }
+
+  const mouthWidth = Math.hypot((right.x - left.x) * W, (right.y - left.y) * H);
+  const mouthOpen = Math.hypot((bottom.x - top.x) * W, (bottom.y - top.y) * H);
+  if (mouthOpen < mouthWidth * 0.075 || mouthOpen < 5) {
+    return;
+  }
+
+  const bounds = points.reduce(
+    (acc, point) => ({
+      minX: Math.min(acc.minX, point.x * W),
+      minY: Math.min(acc.minY, point.y * H),
+      maxX: Math.max(acc.maxX, point.x * W),
+      maxY: Math.max(acc.maxY, point.y * H),
+    }),
+    { minX: W, minY: H, maxX: 0, maxY: 0 }
+  );
+
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
+  const rx = Math.max(8, (bounds.maxX - bounds.minX) * 0.43);
+  const ry = Math.max(4, (bounds.maxY - bounds.minY) * 0.34);
+  const alpha = Math.min(0.30, 0.10 + intensity * 0.20);
+
+  ctx.save();
+  drawPath(ctx, lm, innerMouth, W, H);
+  ctx.closePath();
+  ctx.clip();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.filter = `blur(${Math.max(1.2, mouthOpen * 0.08)}px)`;
+  ctx.fillStyle = hexToRgba(color, alpha);
+
+  ctx.beginPath();
+  ctx.ellipse(cx, cy - mouthOpen * 0.17, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.70;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + mouthOpen * 0.14, rx * 0.86, ry * 0.66, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.filter = 'none';
   ctx.restore();
 }
 
@@ -644,6 +679,277 @@ function fillLipMakeup(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: nu
   ctx.fill('evenodd');
 }
 
+function averagePathPoint(lm: LandmarkPoint[], path: number[]) {
+  const points = path.map((idx) => lm[idx]).filter(Boolean) as LandmarkPoint[];
+  if (points.length === 0) return null;
+  return points.reduce(
+    (acc, point) => ({ x: acc.x + point.x / points.length, y: acc.y + point.y / points.length }),
+    { x: 0, y: 0 },
+  );
+}
+
+function drawLiveBlush(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+  const centers = [
+    { point: lm[50], side: -1 },
+    { point: lm[280], side: 1 },
+  ].filter((item) => item.point) as { point: LandmarkPoint; side: number }[];
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'multiply';
+
+  centers.forEach(({ point, side }) => {
+    const cx = point.x * W + side * faceW * 0.025;
+    const cy = point.y * H + faceH * 0.045;
+    const rx = Math.max(46, faceW * 0.265);
+    const ry = Math.max(30, faceH * 0.170);
+    const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rx, ry));
+    gradient.addColorStop(0, hexToRgba(color, 0.18 + intensity * 0.24));
+    gradient.addColorStop(0.42, hexToRgba(color, 0.085 + intensity * 0.15));
+    gradient.addColorStop(0.76, hexToRgba(color, 0.025 + intensity * 0.070));
+    gradient.addColorStop(1, hexToRgba(color, 0));
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, side * -0.18, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
+function drawLiveBronzer(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
+  const face = getFaceBounds(lm);
+  const faceW = face.width * W;
+  const faceH = face.height * H;
+  const contourPaths = [
+    [234, 93, 132, 58, 172],
+    [454, 323, 361, 288, 397],
+  ];
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const path of contourPaths) {
+    ctx.filter = `blur(${Math.max(10, faceW * 0.035)}px)`;
+    ctx.strokeStyle = hexToRgba(color, 0.14 + intensity * 0.18);
+    ctx.lineWidth = Math.max(18, faceW * 0.075);
+    strokePath(ctx, lm, path, W, H);
+
+    ctx.filter = `blur(${Math.max(18, faceW * 0.055)}px)`;
+    ctx.strokeStyle = hexToRgba(color, 0.055 + intensity * 0.09);
+    ctx.lineWidth = Math.max(34, faceW * 0.13);
+    strokePath(ctx, lm, path, W, H);
+  }
+
+  ctx.filter = 'none';
+  ctx.restore();
+}
+
+function drawLiveEyeshadow(ctx: CanvasRenderingContext2D, lm: LandmarkPoint[], W: number, H: number, color: string, intensity: number) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'soft-light';
+
+  const eyes = [
+    { lid: MAKEUP_PATHS.lash[0], eye: LIVE_EYE_PATHS[0] },
+    { lid: MAKEUP_PATHS.lash[1], eye: LIVE_EYE_PATHS[1] },
+  ];
+
+  for (const item of eyes) {
+    const center = averagePathPoint(lm, item.lid);
+    const eyeBounds = getEyeBounds(lm, item.eye);
+    if (!center || !eyeBounds) continue;
+
+    const cx = center.x * W;
+    const cy = (eyeBounds.center.y - eyeBounds.height * 0.62) * H;
+    const rx = Math.max(34, eyeBounds.width * W * 1.04);
+    const ry = Math.max(18, eyeBounds.height * H * 2.05);
+    const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rx, ry));
+    gradient.addColorStop(0, hexToRgba(color, 0.18 + intensity * 0.30));
+    gradient.addColorStop(0.48, hexToRgba(color, 0.090 + intensity * 0.18));
+    gradient.addColorStop(0.78, hexToRgba(color, 0.030 + intensity * 0.070));
+    gradient.addColorStop(1, hexToRgba(color, 0));
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+const NAIL_SEGMENTS = [
+  { tip: 4, base: 3, knuckle: 2, root: 1, scale: 1.28 },
+  { tip: 8, base: 7, knuckle: 6, root: 5, scale: 1.12 },
+  { tip: 12, base: 11, knuckle: 10, root: 9, scale: 1.14 },
+  { tip: 16, base: 15, knuckle: 14, root: 13, scale: 1.08 },
+  { tip: 20, base: 19, knuckle: 18, root: 17, scale: 1.0 },
+];
+
+function smoothHands(previous: LandmarkPoint[][] | null, next: LandmarkPoint[][], alpha = 0.24) {
+  if (!previous || previous.length !== next.length) {
+    return next.map((hand) => hand.map((point) => ({ ...point })));
+  }
+
+  return next.map((hand, handIndex) => {
+    const prevHand = previous[handIndex];
+    if (!prevHand || prevHand.length !== hand.length) {
+      return hand.map((point) => ({ ...point }));
+    }
+
+    return hand.map((point, pointIndex) => {
+      const prev = prevHand[pointIndex];
+      return {
+        x: prev.x * alpha + point.x * (1 - alpha),
+        y: prev.y * alpha + point.y * (1 - alpha),
+        z: typeof prev.z === 'number' || typeof point.z === 'number'
+          ? (prev.z ?? 0) * alpha + (point.z ?? 0) * (1 - alpha)
+          : undefined,
+      };
+    });
+  });
+}
+
+function convexHull(points: { x: number; y: number }[]) {
+  const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+  if (sorted.length <= 1) return sorted;
+
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+  const lower: { x: number; y: number }[] = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+
+  const upper: { x: number; y: number }[] = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const point = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+
+  upper.pop();
+  lower.pop();
+  return lower.concat(upper);
+}
+
+function pointToSegmentDistance(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 1e-6) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / len2, 0, 1);
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function distanceToHull(point: { x: number; y: number }, hull: { x: number; y: number }[]) {
+  if (hull.length < 2) return Number.POSITIVE_INFINITY;
+  let minDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < hull.length; i++) {
+    minDistance = Math.min(minDistance, pointToSegmentDistance(point, hull[i], hull[(i + 1) % hull.length]));
+  }
+  return minDistance;
+}
+
+function drawNailPolish(
+  ctx: CanvasRenderingContext2D,
+  hands: LandmarkPoint[][],
+  W: number,
+  H: number,
+  color: string,
+  intensity: number,
+  offsetX = 0,
+) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+
+  for (const hand of hands) {
+    const wrist = hand[0];
+    const palmA = hand[5];
+    const palmB = hand[17];
+    const handPixels = hand.map((point) => ({ x: point.x * W, y: point.y * H }));
+    const hull = convexHull(handPixels);
+    const xs = handPixels.map((point) => point.x);
+    const ys = handPixels.map((point) => point.y);
+    const bboxDiag = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const palmWidth = palmA && palmB ? Math.hypot((palmA.x - palmB.x) * W, (palmA.y - palmB.y) * H) : 70;
+    const nailBase = clamp(Math.max(palmWidth * 0.16, bboxDiag * 0.045), 12, 32);
+    const visibleTips = NAIL_SEGMENTS
+      .map((nail) => hand[nail.tip])
+      .filter(Boolean) as LandmarkPoint[];
+
+    for (const nail of NAIL_SEGMENTS) {
+      const tip = hand[nail.tip];
+      const base = hand[nail.base];
+      const knuckle = hand[nail.knuckle];
+      const root = hand[nail.root];
+      if (!tip || !base || !knuckle || !root) continue;
+
+      const dx = tip.x - base.x;
+      const dy = tip.y - base.y;
+      const kdx = tip.x - knuckle.x;
+      const kdy = tip.y - knuckle.y;
+      const tipToBase = Math.hypot(dx * W, dy * H);
+      const baseToRoot = Math.hypot((base.x - root.x) * W, (base.y - root.y) * H);
+      const tipToRoot = Math.hypot((tip.x - root.x) * W, (tip.y - root.y) * H);
+      const extendedRatio = tipToRoot / Math.max(1, baseToRoot);
+      const wristDistance = wrist ? Math.hypot((tip.x - wrist.x) * W, (tip.y - wrist.y) * H) : palmWidth;
+      const nearestTipDistance = visibleTips.reduce((nearest, other) => {
+        if (other === tip) return nearest;
+        return Math.min(nearest, Math.hypot((tip.x - other.x) * W, (tip.y - other.y) * H));
+      }, Number.POSITIVE_INFINITY);
+      const tipPixel = { x: tip.x * W, y: tip.y * H };
+      const contourDistance = distanceToHull(tipPixel, hull);
+      const visibleEnough =
+        tipToBase > palmWidth * 0.050 &&
+        extendedRatio > 1.16 &&
+        wristDistance > palmWidth * 0.86 &&
+        nearestTipDistance > palmWidth * 0.16 &&
+        contourDistance < Math.max(10, palmWidth * 0.075);
+      if (!visibleEnough) continue;
+
+      const angle = Math.atan2(dy, dx);
+      const rx = clamp(nailBase * nail.scale, 12, 30);
+      const ry = clamp(nailBase * 0.58 * nail.scale, 7, 18);
+      const cx = tip.x * W + offsetX - dx * W * 0.20;
+      const cy = tip.y * H - dy * H * 0.20;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+      ctx.fillStyle = hexToRgba(color, 0.38 + intensity * 0.52);
+      ctx.strokeStyle = hexToRgba('#FFFFFF', 0.10 + intensity * 0.08);
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = hexToRgba('#FFFFFF', 0.12);
+      ctx.beginPath();
+      ctx.ellipse(-rx * 0.25, -ry * 0.28, rx * 0.22, ry * 0.18, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawMakeup(
   ctx: CanvasRenderingContext2D,
   lm: LandmarkPoint[],
@@ -656,34 +962,38 @@ function drawMakeup(
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-  if (target === 'brow') {
-    drawBrowMakeup(ctx, lm, W, H, color, intensity);
+  if (target === 'lash') {
+    drawLiveEyeshadow(ctx, lm, W, H, color, intensity);
     ctx.restore();
     return;
   }
 
   if (target === 'eye') {
-    drawEyeColor(ctx, lm, W, H, color, intensity);
+    drawEyeColor(ctx, lm, W, H, color, intensity * 0.72);
     ctx.restore();
     return;
   }
 
-  if (target === 'lash') {
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = Math.min(0.82, 0.26 + intensity * 0.52);
-    ctx.strokeStyle = hexToRgba(color, 0.88);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 1.2 + intensity * 2.0;
-    for (const path of MAKEUP_PATHS.lash) {
-      strokePath(ctx, lm, path, W, H);
-    }
+  if (target === 'cheek') {
+    drawLiveBlush(ctx, lm, W, H, color, intensity);
     ctx.restore();
     return;
   }
 
-  ctx.globalCompositeOperation = target === 'teeth' ? 'screen' : 'soft-light';
-  ctx.fillStyle = hexToRgba(color, target === 'teeth' ? 0.52 : 0.62);
+  if (target === 'bronzer') {
+    drawLiveBronzer(ctx, lm, W, H, color, intensity);
+    ctx.restore();
+    return;
+  }
+
+  if (target === 'teeth') {
+    drawTeethWhitening(ctx, lm, W, H, color, intensity);
+    ctx.restore();
+    return;
+  }
+
+  ctx.globalCompositeOperation = 'soft-light';
+  ctx.fillStyle = hexToRgba(color, 0.62);
   ctx.strokeStyle = hexToRgba(color, 0.72);
   ctx.globalAlpha = Math.min(0.66, 0.16 + intensity * 0.52);
 
@@ -1235,6 +1545,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const agingPreviewImageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<any>(null);
   const landmarkerRef = useRef<any>(null);
+  const handLandmarkerRef = useRef<any>(null);
   const rafRef = useRef<number | null>(null);
   const fpsTimeRef = useRef<number>(performance.now());
   const fpsCountRef = useRef<number>(0);
@@ -1433,6 +1744,7 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   const makeupRef = useRef({ target: makeupTarget, profiles: makeupProfiles, enabled: makeupEnabled });
   const showLandmarksRef = useRef(showLandmarks);
   const smoothedLandmarksRef = useRef<LandmarkPoint[] | null>(null);
+  const smoothedHandsRef = useRef<LandmarkPoint[][] | null>(null);
 
   useEffect(() => { intensitiesRef.current = intensities; }, [intensities]);
   useEffect(() => {
@@ -1468,10 +1780,10 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
   };
 
   const init = async () => {
-    if (landmarkerRef.current) return;
+    if (landmarkerRef.current && handLandmarkerRef.current) return;
     setMessage('Yüz modeli yükleniyor...');
 
-    const { FaceLandmarker, FilesetResolver } = await eval(
+    const { FaceLandmarker, FilesetResolver, HandLandmarker } = await eval(
       `import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js")`,
     );
 
@@ -1488,12 +1800,26 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       runningMode: 'VIDEO',
       numFaces: 1,
     });
+
+    handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      numHands: 2,
+      minHandDetectionConfidence: 0.55,
+      minHandPresenceConfidence: 0.55,
+      minTrackingConfidence: 0.45,
+    });
   };
 
   const drawFrame = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const landmarker = landmarkerRef.current;
+    const handLandmarker = handLandmarkerRef.current;
     if (!video || !canvas || !landmarker) return;
 
     const W = video.videoWidth || 640;
@@ -1657,6 +1983,20 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       ctx.filter = 'none';
     }
 
+    const makeup = makeupRef.current;
+    const nailProfile = makeup.profiles.nail;
+    if (makeup.enabled && nailProfile?.active && nailProfile.intensity > 0.005 && handLandmarker) {
+      const handResult = handLandmarker.detectForVideo(video, now);
+      const detectedHands = (handResult.landmarks ?? []) as LandmarkPoint[][];
+      const hands = smoothHands(smoothedHandsRef.current, detectedHands);
+      smoothedHandsRef.current = hands;
+      if (hands.length > 0) {
+        drawNailPolish(ctx, hands, W, H, nailProfile.color, nailProfile.intensity, 0);
+      }
+    } else {
+      smoothedHandsRef.current = null;
+    }
+
     if (!lm) {
       if (now - lastFaceSeenAtRef.current > 420) {
         setMessage('Yüz aranıyor...');
@@ -1793,9 +2133,9 @@ export default function LiveWarpCamera({ onCapture, isDark = true }: LiveWarpCam
       }
     }
 
-    const makeup = makeupRef.current;
     if (makeup.enabled) {
       (Object.keys(makeup.profiles) as MakeupTarget[]).forEach((target) => {
+        if (target === 'nail') return;
         const profile = makeup.profiles[target];
         if (profile.active && profile.intensity > 0.005) {
           drawMakeup(ctx, lm, W, H, target, profile.color, profile.intensity);

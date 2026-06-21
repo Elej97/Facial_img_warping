@@ -174,7 +174,7 @@ const MANUAL_MAKEUP_PRESETS: MakeupPreset[] = [
   { key: 'lip', label: 'Ruj', backendRegion: 'lip', defaultColor: '#D45A73' },
   { key: 'cheek', label: 'Allık', backendRegion: 'cheek', defaultColor: '#F29AAF' },
   { key: 'bronzer', label: 'Bronzer', backendRegion: 'cheek', defaultColor: '#B97A4C' },
-  { key: 'lash', label: 'Eyeliner', backendRegion: 'lash', defaultColor: '#1D1D1F' },
+  { key: 'lash', label: 'Far', backendRegion: 'lash', defaultColor: '#8E5CF7' },
   { key: 'brow', label: 'Kaş', backendRegion: 'brow', defaultColor: '#5E4735' },
   { key: 'eye', label: 'Göz Rengi', backendRegion: 'eye', defaultColor: '#8B4513' },
   { key: 'teeth', label: 'Diş Beyazlatma', backendRegion: 'teeth', defaultColor: '#FFFFFF' },
@@ -184,7 +184,7 @@ const MANUAL_MAKEUP_SWATCHES: Record<MakeupUiTarget, string[]> = {
   lip: ['#D45A73', '#A83253', '#F18FA7', '#BE4369', '#FF7AA2'],
   cheek: ['#F29AAF', '#F2B2A6', '#E88E7A', '#DB6F93', '#F7C1C8'],
   bronzer: ['#B97A4C', '#9F6642', '#D09A6B', '#7F5337', '#C88557'],
-  lash: ['#1D1D1F', '#2E2E33', '#505057'],
+  lash: ['#8E5CF7', '#D86AD8', '#4ECDC4', '#5B8DEF', '#C9A227'],
   brow: ['#5E4735', '#463427', '#7A5B43', '#2D221A'],
   eye: ['#8B4513', '#1C3A70', '#2F5233', '#704214', '#1A1A2E'],
   teeth: ['#FFFFFF', '#F5F5F5', '#FFFACD', '#F0E68C', '#FAFAF0'],
@@ -194,7 +194,7 @@ const MANUAL_MAKEUP_LABELS: Record<MakeupUiTarget, string> = {
   lip: 'Ruj',
   cheek: 'Allık',
   bronzer: 'Bronzer',
-  lash: 'Eyeliner',
+  lash: 'Far',
   brow: 'Kaş',
   eye: 'Göz Rengi',
   teeth: 'Diş Beyazlatma',
@@ -285,6 +285,19 @@ const toWebImageUri = (asset: { uri: string; base64?: string | null; mimeType?: 
 
   const mimeType = asset.mimeType || 'image/jpeg';
   return `data:${mimeType};base64,${asset.base64}`;
+};
+
+const imageElementToPngDataUrl = (image: HTMLImageElement, width: number, height: number) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return null;
+  }
+
+  ctx.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL('image/png');
 };
 
 const createInitialCropBox = (stage: StageLayout, imageSize: { width: number; height: number }): CropBox => {
@@ -1137,16 +1150,7 @@ export default function CreateScreen() {
     const objectUrl = URL.createObjectURL(file);
     const reader = new FileReader();
     const image = document.createElement('img');
-    let imageB64: string | null = null;
     let imageSize: { width: number; height: number } | null = null;
-
-    const finishSelection = () => {
-      if (!imageB64 || !imageSize) {
-        return;
-      }
-
-      applySelectedImage(file.name || 'secilen_gorsel', objectUrl, imageSize, imageB64);
-    };
 
     image.onload = () => {
       const width = image.naturalWidth || image.width;
@@ -1164,7 +1168,16 @@ export default function CreateScreen() {
       }
 
       imageSize = { width, height };
-      finishSelection();
+      const pngDataUrl = imageElementToPngDataUrl(image, width, height);
+      URL.revokeObjectURL(objectUrl);
+
+      if (!pngDataUrl) {
+        setProcessState('error');
+        setStatusMessage('Gorsel hazirlanamadi. Lutfen baska bir fotograf secin.');
+        return;
+      }
+
+      applySelectedImage(file.name || 'secilen_gorsel', pngDataUrl, imageSize, pngDataUrl);
     };
 
     image.onerror = () => {
@@ -1174,8 +1187,13 @@ export default function CreateScreen() {
     };
 
     reader.onload = () => {
-      imageB64 = typeof reader.result === 'string' ? reader.result : null;
-      finishSelection();
+      if (typeof reader.result === 'string') {
+        image.src = reader.result;
+      } else {
+        URL.revokeObjectURL(objectUrl);
+        setProcessState('error');
+        setStatusMessage('Dosya okunamadi. Lutfen baska bir fotograf secin.');
+      }
     };
 
     reader.onerror = () => {
@@ -1185,7 +1203,6 @@ export default function CreateScreen() {
     };
 
     reader.readAsDataURL(file);
-    image.src = objectUrl;
   };
 
   const pickImage = async () => {
@@ -1750,6 +1767,52 @@ export default function CreateScreen() {
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (error: any) {
       setMakeupError(error?.message ?? 'Unknown makeup error');
+    } finally {
+      setMakeupLoading(false);
+    }
+  };
+
+  const rebuildMakeupLayers = async (layersToApply: MakeupLayer[]) => {
+    const baseImageB64 = selectedImageB64 ?? preprocessedB64;
+    if (!baseImageB64) return;
+
+    if (layersToApply.length === 0) {
+      setMakeupLayers([]);
+      setMakeupResultB64(null);
+      setMakeupPreviewKind((current) => current === 'makeup' ? null : current);
+      return;
+    }
+
+    setMakeupLoading(true);
+    setMakeupError(null);
+
+    try {
+      let currentB64 = baseImageB64;
+      const rebuiltLayers: MakeupLayer[] = [];
+
+      for (const layer of layersToApply) {
+        const data = await applyMakeupFromBase64(currentB64, layer.region, layer.color, layer.intensity, {
+          landmarkBackend: 'hybrid',
+          temporalSmoothing: true,
+          emaAlpha: 0.62,
+          streamId: 'makeup-ui',
+        });
+
+        if (!data.success) {
+          throw new Error(data.message ?? 'Makeup layer rebuild failed');
+        }
+
+        currentB64 = data.result_image_b64;
+        rebuiltLayers.push({ ...layer, resultB64: currentB64 });
+      }
+
+      setMakeupLayers(rebuiltLayers);
+      setMakeupResultB64(currentB64);
+      setMakeupPreviewKind('makeup');
+      setAgeAfter(null);
+      void runAgeAnalysis(currentB64, 'after', 'base64');
+    } catch (error: any) {
+      setMakeupError(error?.message ?? 'Makeup layers could not be rebuilt');
     } finally {
       setMakeupLoading(false);
     }
@@ -3310,19 +3373,7 @@ export default function CreateScreen() {
                       <ThemedText style={styles.makeupLayerLabel}>{label} {Math.round(layer.intensity * 100)}%</ThemedText>
                       <Pressable
                         onPress={() => {
-                          // When deleting a layer, also delete all layers after it
-                          // (they are built on top of the deleted layer's result)
-                          const updated = makeupLayers.slice(0, idx);
-                          setMakeupLayers(updated);
-                          
-                          if (updated.length > 0) {
-                            // Show the last remaining layer's result
-                            setMakeupResultB64(updated[updated.length - 1].resultB64);
-                            setMakeupPreviewKind('makeup');
-                          } else {
-                            setMakeupResultB64(null);
-                            setMakeupPreviewKind((current) => current === 'makeup' ? null : current);
-                          }
+                          void rebuildMakeupLayers(makeupLayers.filter((_, layerIdx) => layerIdx !== idx));
                         }}
                         style={styles.makeupLayerDeleteBtn}>
                         <Ionicons name="close-circle" size={20} color={colors.tint} />
