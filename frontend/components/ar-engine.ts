@@ -60,18 +60,31 @@ export const MASK_URLS: Record<MaskStyle, string> = {
   'gas-mask': '/models/masks/gas-mask.glb',
 };
 
+// Mask width in IPD units (face width ≈ 3 IPD; fox head covers full head ≈ 5 IPD).
 const MASK_IPD_SCALE: Record<MaskStyle, number> = {
-  'clown-mask': 2.8,
-  'fox-head': 3.8,
-  'anon-mask': 2.5,
-  'gas-mask': 2.8,
+  'clown-mask': 3.2,
+  'fox-head':   4.5,
+  'anon-mask':  3.2,
+  'gas-mask':   3.2,
 };
 
+// Vertical offset from face.bridge in IPD units (negative = down).
+// face.bridge = between eyes; nose tip ≈ -1.5 IPD; chin ≈ -3 IPD.
 const MASK_UP_OFFSET: Record<MaskStyle, number> = {
-  'clown-mask': -0.18,
-  'fox-head': 0.05,
-  'anon-mask': -0.15,
-  'gas-mask': -0.28,
+  'clown-mask': -0.4,
+  'fox-head':   -0.3,
+  'anon-mask':  -1.9,
+  'gas-mask':   -0.6,
+};
+
+// Pre-rotation applied before bbox computation.
+// Other masks face -Z in OBJ → Ry(π) brings them to +Z (toward camera).
+// clown-mask faces -X in OBJ → Ry(π/2) brings it to +Z.
+const MASK_PRE_ROTATION: Record<MaskStyle, [number, number, number]> = {
+  'clown-mask': [0, Math.PI / 2, 0],
+  'fox-head':   [0, Math.PI,     0],
+  'anon-mask':  [0, Math.PI,     0],
+  'gas-mask':   [0, Math.PI,     0],
 };
 
 const HAT_OFFSETS: Record<HatStyle, { dy: number; dz: number; scale?: number }> = {
@@ -447,13 +460,17 @@ export class AREngine {
     for (const [style, url] of Object.entries(MASK_URLS) as [MaskStyle, string][]) {
       loader.load(url, (gltf) => {
         const model = gltf.scene;
+        // Apply axis correction BEFORE bbox so scaling is computed in corrected space.
+        // obj2gltf preserves the OBJ axes as-is; most face-mask OBJs are Z-up with the
+        // face pointing toward +Y, so -90° around X brings the face to face +Z (camera).
+        const [rx, ry, rz] = MASK_PRE_ROTATION[style];
+        model.rotation.set(rx, ry, rz);
         model.updateWorldMatrix(true, true);
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
-        // Normalize: center and scale so the model is MASK_IPD_SCALE wide in group space
-        model.position.sub(center);
-        model.scale.setScalar(MASK_IPD_SCALE[style] / Math.max(size.x, 0.001));
+        model.position.set(-center.x, -center.y, -center.z);
+        model.scale.setScalar(MASK_IPD_SCALE[style] / Math.max(size.x, size.y, 0.001));
         model.traverse(child => {
           if (child instanceof THREE.Mesh) {
             child.frustumCulled = false;
