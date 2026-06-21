@@ -329,6 +329,7 @@ def apply_sam_aging(
     target_age: float = 65.0,
     intensity: float = 1.0,
     detail_amount: float = 0.9,
+    texture_amount: float = 0.5,
 ) -> np.ndarray:
     import torch
     import torchvision.transforms as T
@@ -378,6 +379,13 @@ def apply_sam_aging(
 
     # 7. Renk eşleştirme (1024px)
     aged = _match_color(aged, aligned, color_mask)
+
+    # 7a. (deneysel) Gerçek gözenek/doku enjeksiyonu: orijinalin yüksek-frekansını skin
+    #     bölgesinde aged'e ekle (aligned uzayda kayıtlı). SAM'ın "plastik" cildine doku verir.
+    if texture_amount > 0.0:
+        hf = aligned.astype(np.float32) - cv2.GaussianBlur(aligned.astype(np.float32), (0, 0), 1.4)
+        sm = (color_mask.astype(np.float32) / 255.0)[:, :, None]
+        aged = np.clip(aged.astype(np.float32) + hf * texture_amount * sm, 0, 255).astype(np.uint8)
 
     # 8. Intensity blend (1024px)
     if intensity < 1.0:
