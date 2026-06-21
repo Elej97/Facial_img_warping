@@ -152,6 +152,33 @@ def _build_eye_exclusion(lms_aligned):
     return excl
 
 
+# mouth ring + philtrum + lower nose — SAM tends to smear the StyleGAN reconstruction here
+_MP_MOUTH_NOSE = [
+    61, 291, 0, 17, 13, 14, 37, 267, 84, 314, 40, 270, 91, 321, 146, 375, 178, 402, 185, 409,
+    2, 94, 164, 19, 1, 0,
+]
+
+
+def _build_mouth_nose_exclusion(lms_aligned):
+    """Feathered mask over the mouth/philtrum/lower-nose so that region is kept from the
+    ORIGINAL during paste-back. SAM's StyleGAN reconstruction smears this area on some faces
+    (visible at 1024); keeping it from the source hides the smear at the cost of slightly less
+    aging right around the mouth."""
+    pts = np.array(
+        [[int(np.clip(lms_aligned[i][0], 0, _SIZE - 1)),
+          int(np.clip(lms_aligned[i][1], 0, _SIZE - 1))]
+         for i in _MP_MOUTH_NOSE if i < len(lms_aligned)],
+        dtype=np.int32,
+    )
+    excl = np.zeros((_SIZE, _SIZE), np.uint8)
+    if len(pts) >= 3:
+        cv2.fillConvexPoly(excl, cv2.convexHull(pts.reshape(-1, 1, 2)), 255)
+    k = _odd(13 * _F)
+    excl = cv2.dilate(excl, np.ones((k, k), np.uint8), iterations=2)
+    excl = cv2.GaussianBlur(excl, (0, 0), sigmaX=9 * _F)
+    return excl
+
+
 def _match_color(sam, orig, face_mask):
     """LAB uzayında renk eşleştirme — yüz merkezi istatistiği.
 
@@ -372,10 +399,11 @@ def apply_sam_aging(
     color_mask = _build_face_mask(orig_lms_aligned)
     blend_mask = _build_blend_mask(orig_lms_aligned)
     eye_excl   = _build_eye_exclusion(orig_lms_aligned)
+    mouth_excl = _build_mouth_nose_exclusion(orig_lms_aligned)
 
-    # Göz/gözlük bölgesini blend maskesinden çıkar
+    # Göz/gözlük + ağız/burun (SAM smear) bölgelerini blend maskesinden çıkar -> orijinalden gelsin
     blend_mask = np.clip(
-        blend_mask.astype(np.int32) - eye_excl.astype(np.int32), 0, 255
+        blend_mask.astype(np.int32) - eye_excl.astype(np.int32) - mouth_excl.astype(np.int32), 0, 255
     ).astype(np.uint8)
 
     # 7. Renk eşleştirme (1024px)
