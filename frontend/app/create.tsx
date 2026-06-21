@@ -22,34 +22,29 @@ import {
     useWindowDimensions
 } from 'react-native';
 
+import type { EarringStyle, GlassesStyle, HatStyle, MaskStyle, NecklaceStyle, TieStyle } from '@/components/ar-engine';
+import { AREngine, EARRING_URLS, GLB_URLS, HAT_URLS, MASK_URLS, NECKLACE_URLS, TIE_URLS } from '@/components/ar-engine';
 import LiveWarpCamera, {
-  GLASSES_VARIANTS,
-  HAT_VARIANTS,
-  EARRING_VARIANTS,
-  NECKLACE_VARIANTS,
-  TIE_VARIANTS,
-  MASK_VARIANTS
+    EARRING_VARIANTS,
+    GLASSES_VARIANTS,
+    HAT_VARIANTS,
+    MASK_VARIANTS,
+    NECKLACE_VARIANTS,
+    TIE_VARIANTS
 } from '@/components/live-warp-camera';
-import { AREngine, GLB_URLS, HAT_URLS, EARRING_URLS, NECKLACE_URLS, TIE_URLS, MASK_URLS } from '@/components/ar-engine';
-import type { GlassesStyle, HatStyle, EarringStyle, NecklaceStyle, TieStyle, MaskStyle } from '@/components/ar-engine';
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { STUDIO, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     accessoryAssetUrl,
+    agingSamFromBase64,
     applyAccessoryFromBase64,
     applyHairColorFromBase64,
     applyMakeupFromBase64,
     estimateAgeFromBase64,
     estimateAgeFromUri,
     exportEvaluationReportFromBase64,
-    agingSamFromBase64,
-    frequencyProFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
     transferExpressionFromBase64,
@@ -60,6 +55,10 @@ import {
     type ProWarpOperation
 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 const MIN_WIDTH = 512;
 const MIN_HEIGHT = 512;
@@ -153,6 +152,9 @@ const PRO_OPERATIONS: ProOperation[] = [
   'brow_lift',
   'lip_plump',
   'slim_face',
+  'enlarge_eyes',
+  'sharpen_jaw',
+  'resize_nose',
   'aging',
   'deaging',
 ];
@@ -162,6 +164,9 @@ const PRO_LABEL: Record<ProOperation, string> = {
   brow_lift: 'Brow Lift',
   lip_plump: 'Lip Plump',
   slim_face: 'Slim Face',
+  enlarge_eyes: 'Enlarge Eyes',
+  sharpen_jaw: 'Sharpen Jaw',
+  resize_nose: 'Resize Nose',
   aging: 'Aging',
   deaging: 'De-Aging',
 };
@@ -499,6 +504,7 @@ export default function CreateScreen() {
     brow_lift: LAB_DEFAULT_INTENSITY,
     lip_plump: LAB_DEFAULT_INTENSITY,
     slim_face: LAB_DEFAULT_INTENSITY,
+    resize_nose: LAB_DEFAULT_INTENSITY,
     aging: 80,
     deaging: 80,
   });

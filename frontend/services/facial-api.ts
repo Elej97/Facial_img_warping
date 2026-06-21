@@ -259,7 +259,7 @@ export type ProMetrics = {
   hf_lf_ratio_delta?: number;
 };
 
-export type ProWarpOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face';
+export type ProWarpOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face' | 'enlarge_eyes' | 'sharpen_jaw' | 'resize_nose';
 
 export async function exportEvaluationReportFromBase64(
   format: 'csv' | 'pdf',

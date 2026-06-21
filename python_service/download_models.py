@@ -59,7 +59,7 @@ def download_sam_model() -> None:
         size_gb = os.path.getsize(SAM_MODEL) / (1024 ** 3)
         print(f"SAM modeli zaten mevcut ({size_gb:.1f} GB): {SAM_MODEL}")
         return
-    print("SAM model ağırlıkları indiriliyor (≈2.1 GB)...")
+    print("SAM model agirliklari indiriliyor (~2.1 GB)...")
     download_from_gdrive(SAM_GDRIVE_ID, SAM_MODEL)
     if os.path.exists(SAM_MODEL):
         size_gb = os.path.getsize(SAM_MODEL) / (1024 ** 3)
