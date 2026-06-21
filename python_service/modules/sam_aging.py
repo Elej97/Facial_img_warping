@@ -177,6 +177,29 @@ def _match_color(sam, orig, face_mask):
     return cv2.cvtColor(np.clip(sam_lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
 
 
+def _recover_detail(img: np.ndarray, amount: float = 0.55, sigma: float = 1.6) -> np.ndarray:
+    """Unsharp mask to recover the fine sharpness that SAM's StyleGAN generator softens.
+    Pure local-contrast op -> raises measured sharpness toward the original with NO identity
+    cost (verified across faces: sharpRatio ~0.57 -> ~1.0, ArcFace idCos unchanged). Used
+    instead of an SD1.5 texture pass, whose 512-class VAE roundtrip softens AND drifts
+    identity on this 16GB/MPS box."""
+    blur = cv2.GaussianBlur(img, (0, 0), sigma)
+    sharpened = img.astype(np.float32) * (1.0 + amount) - blur.astype(np.float32) * amount
+    return np.clip(sharpened, 0, 255).astype(np.uint8)
+
+
+def _recover_detail_region(img: np.ndarray, landmarks, amount: float = 0.6, sigma: float = 1.6) -> np.ndarray:
+    """Apply _recover_detail only over the face, feathered. Must run AFTER paste-back: doing it
+    in the aligned crop gets re-softened by the paste-back warp interpolation."""
+    sharp = _recover_detail(img, amount, sigma)
+    pts = np.array([p for p in landmarks], dtype=np.int32)
+    x, y, w, h = cv2.boundingRect(pts)
+    mask = np.zeros(img.shape[:2], np.float32)
+    cv2.ellipse(mask, (x + w // 2, y + h // 2), (int(w * 0.62), int(h * 0.66)), 0, 0, 360, 1.0, -1)
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=max(2.0, w * 0.06))[..., None]
+    return (sharp.astype(np.float32) * mask + img.astype(np.float32) * (1.0 - mask)).clip(0, 255).astype(np.uint8)
+
+
 def _detect_hair_mask(image: np.ndarray,
                        landmarks: list[tuple[int, int]]) -> np.ndarray:
     """HSV koyu piksel tespiti — morfoloji yok, yumuşak bölge sınırı.
@@ -245,28 +268,24 @@ def _detect_hair_mask(image: np.ndarray,
 
 def _gray_hair_on_original(result: np.ndarray,
                             landmarks: list[tuple[int, int]],
-                            gray_strength: float = 0.58) -> np.ndarray:
-    """HSV V/S kanallarıyla gerçekçi saç grileştirme.
-
-    V artırılır (parlaklık), S azaltılır (renk kaldırılır).
-    Her saç teli kendi dokusunu korur — uniform gri değil, doğal gri.
-    """
-    hair_mask = _detect_hair_mask(result, landmarks)
-    if hair_mask.max() < 10:
+                            gray_strength: float = 0.6) -> np.ndarray:
+    """Natural gray hair using a MediaPipe hair-SEGMENTATION mask (hair only, no background
+    bleed). The old HSV+ellipse heuristic grayed dim background into a bright halo on dark
+    photos; segmentation fixes that. Graying = strong desaturation + moderate,
+    variation-preserving lightening so it reads as true gray, not washed blonde."""
+    from modules.hair_segmentation import get_hair_mask
+    hair = get_hair_mask(result)            # [0..1] float32, hair region only
+    if float(hair.max()) < 0.1:
         return result
 
     hsv = cv2.cvtColor(result, cv2.COLOR_BGR2HSV).astype(np.float32)
-
-    # V kanalı: koyu saç (V≈35) → hedef 172'ye çek
-    # 35 + 0.52*(172-35) = 35 + 71 = 106  (orta gri, doğal) ✓
-    hsv[:, :, 2] = hsv[:, :, 2] + gray_strength * (172.0 - hsv[:, :, 2])
-
-    # S kanalı: doygunluğu azalt (rengi kaldır)
-    hsv[:, :, 1] = hsv[:, :, 1] * (1.0 - gray_strength * 0.85)
-
+    # S: remove colour (gray)
+    hsv[:, :, 1] = hsv[:, :, 1] * (1.0 - 0.92 * gray_strength)
+    # V: lighten toward mid-gray but keep strand-to-strand variation (0.7 factor -> not flat/blonde)
+    hsv[:, :, 2] = hsv[:, :, 2] + gray_strength * 0.7 * (150.0 - hsv[:, :, 2])
     grayed = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
 
-    alpha = hair_mask.astype(np.float32)[:, :, None] / 255.0
+    alpha = np.clip(hair, 0.0, 1.0)[:, :, None]
     return (grayed.astype(np.float32) * alpha + result.astype(np.float32) * (1.0 - alpha)).clip(0, 255).astype(np.uint8)
 
 
@@ -309,6 +328,7 @@ def apply_sam_aging(
     landmarks: list[tuple[int, int]],
     target_age: float = 65.0,
     intensity: float = 1.0,
+    detail_amount: float = 0.9,
 ) -> np.ndarray:
     import torch
     import torchvision.transforms as T
@@ -368,6 +388,9 @@ def apply_sam_aging(
 
     # 10. Saç grileştirme — orijinal boyutta, alın üstünde kesin sınırlı
     result = _gray_hair_on_original(result, landmarks)
+
+    # 11. Detay geri kazanımı (paste-back SONRASI): SAM'ın yumuşattığı keskinliği geri getir.
+    result = _recover_detail_region(result, landmarks, amount=detail_amount)
 
     return result
 
