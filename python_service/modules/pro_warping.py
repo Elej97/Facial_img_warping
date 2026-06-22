@@ -56,9 +56,6 @@ def _rbf_warp(
 
     displacement = dst_all - src_all
 
-    ys, xs = np.mgrid[0:h, 0:w]
-    query = np.stack([xs.ravel(), ys.ravel()], axis=1).astype(np.float32)
-
     kwargs: dict = {"kernel": kernel, "smoothing": smoothing}
     if epsilon is not None:
         kwargs["epsilon"] = float(max(1e-4, epsilon))
@@ -68,8 +65,22 @@ def _rbf_warp(
     rbf_dx = RBFInterpolator(src_all, displacement[:, 0], **kwargs)
     rbf_dy = RBFInterpolator(src_all, displacement[:, 1], **kwargs)
 
-    flow_x = rbf_dx(query).reshape(h, w).astype(np.float32)
-    flow_y = rbf_dy(query).reshape(h, w).astype(np.float32)
+    # PERF: the RBF flow is smooth, so evaluate it on a COARSE grid (longest side <= 256)
+    # and bilinearly upsample, instead of querying every h*w pixel. Querying all pixels with
+    # neighbors=128 was the slowness (slim_face etc.); this is ~10-40x faster, no visible change.
+    s = 256.0 / float(max(h, w))
+    if s < 1.0:
+        gw, gh = max(2, int(round(w * s))), max(2, int(round(h * s)))
+        mx, my = np.meshgrid(np.linspace(0, w - 1, gw, dtype=np.float32),
+                             np.linspace(0, h - 1, gh, dtype=np.float32))
+        query = np.stack([mx.ravel(), my.ravel()], axis=1).astype(np.float32)
+        flow_x = cv2.resize(rbf_dx(query).reshape(gh, gw).astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+        flow_y = cv2.resize(rbf_dy(query).reshape(gh, gw).astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+    else:
+        ys, xs = np.mgrid[0:h, 0:w]
+        query = np.stack([xs.ravel(), ys.ravel()], axis=1).astype(np.float32)
+        flow_x = rbf_dx(query).reshape(h, w).astype(np.float32)
+        flow_y = rbf_dy(query).reshape(h, w).astype(np.float32)
 
     # Keep deformation localized in face region for natural transitions.
     mask = _face_mask(h, w, face_points)
