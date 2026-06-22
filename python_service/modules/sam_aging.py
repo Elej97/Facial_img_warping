@@ -358,6 +358,7 @@ def apply_sam_aging(
     detail_amount: float = 0.9,
     texture_amount: float = 0.0,  # disabled by default: injecting the ORIGINAL's high-freq onto
                                   # the (geometry-shifted) aged face ghosts eyes/nose on some images
+    gray_hair: bool = True,       # MUST be False for de-aging — graying makes a young result look OLD
 ) -> np.ndarray:
     import torch
     import torchvision.transforms as T
@@ -398,13 +399,16 @@ def apply_sam_aging(
     # 6. Maskeler
     color_mask = _build_face_mask(orig_lms_aligned)
     blend_mask = _build_blend_mask(orig_lms_aligned)
-    eye_excl   = _build_eye_exclusion(orig_lms_aligned)
-    mouth_excl = _build_mouth_nose_exclusion(orig_lms_aligned)
 
-    # Göz/gözlük + ağız/burun (SAM smear) bölgelerini blend maskesinden çıkar -> orijinalden gelsin
-    blend_mask = np.clip(
-        blend_mask.astype(np.int32) - eye_excl.astype(np.int32) - mouth_excl.astype(np.int32), 0, 255
-    ).astype(np.uint8)
+    # Eye + mouth/nose exclusions keep those regions from the ORIGINAL to hide SAM's AGING
+    # smear. For DE-AGING they instead paste adult features (beard, defined mouth, adult eyes)
+    # onto the smoothed young face -> mismatched dark blotches ("ek göz"). So only protect when aging.
+    if gray_hair:
+        eye_excl   = _build_eye_exclusion(orig_lms_aligned)
+        mouth_excl = _build_mouth_nose_exclusion(orig_lms_aligned)
+        blend_mask = np.clip(
+            blend_mask.astype(np.int32) - eye_excl.astype(np.int32) - mouth_excl.astype(np.int32), 0, 255
+        ).astype(np.uint8)
 
     # 7. Renk eşleştirme (1024px)
     aged = _match_color(aged, aligned, color_mask)
@@ -416,15 +420,18 @@ def apply_sam_aging(
         sm = (color_mask.astype(np.float32) / 255.0)[:, :, None]
         aged = np.clip(aged.astype(np.float32) + hf * texture_amount * sm, 0, 255).astype(np.uint8)
 
-    # 8. Intensity blend (1024px)
-    if intensity < 1.0:
+    # 8. Intensity blend (1024px) — ONLY for aging. For de-aging this cross-fades the original
+    #    with a geometry-shifted young SAM face -> a ghost "double face" at 50%. De-aging instead
+    #    controls strength via the target age (see /aging/sam), and always uses the full SAM result.
+    if intensity < 1.0 and gray_hair:
         aged = cv2.addWeighted(aligned, 1.0 - intensity, aged, intensity, 0)
 
     # 9. Orijinale yapıştır (1024px aged crop -> original)
     result = _paste_back(image_np, aged, M_inv, blend_mask)
 
-    # 10. Saç grileştirme — orijinal boyutta, alın üstünde kesin sınırlı
-    result = _gray_hair_on_original(result, landmarks)
+    # 10. Saç grileştirme — sadece YAŞLANDIRMADA. De-aging'de gri saç sonucu yaşlı gösterir.
+    if gray_hair:
+        result = _gray_hair_on_original(result, landmarks)
 
     # 11. Detay geri kazanımı (paste-back SONRASI): SAM'ın yumuşattığı keskinliği geri getir.
     result = _recover_detail_region(result, landmarks, amount=detail_amount)

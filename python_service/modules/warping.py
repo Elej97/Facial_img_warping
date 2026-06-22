@@ -632,28 +632,39 @@ def sharpen_jaw(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -
     intensity_eff = float(np.clip(intensity, 0.0, 1.0))
     scale = float(min(h, w))
     
+    n = len(landmarks)
+    if n < 468:
+        return image_np.copy()
+
     dst = list(landmarks)
-    nose_tip = landmarks[1] if 1 < len(landmarks) else (w//2, h//2)
-    
+    cx = float(landmarks[1][0]) if 1 < n else w * 0.5
+
     jaw_left = [132, 58, 172, 136, 150, 149, 176, 148]
     jaw_right = [361, 288, 397, 365, 379, 378, 400, 377]
-    chin = [152]
-    
-    inward = scale * 0.035 * intensity_eff
-    upward = scale * 0.025 * intensity_eff
-    
-    for i in jaw_left + jaw_right + chin:
-        if i < len(dst):
-            x, y = dst[i][:2]
-            dx = nose_tip[0] - x
-            sign_x = np.sign(dx)
-            nx = int(x + sign_x * inward)
-            ny = int(y - upward)
-            if i in chin:
-                nx = int(x)
-                ny = int(y - upward * 1.5)
-            dst[i] = (nx, ny) + tuple(dst[i][2:])
-            
-    warped = apply_delaunay_warp(image_np, landmarks, dst)
-    return warped
+    chin = [152, 175, 396, 171, 394, 369]
+    jaw_ids = [i for i in (jaw_left + jaw_right + chin) if i < n]
+
+    # Gentler than before (was 0.035/0.025 -> harsh tearing). Inward toward the face centre.
+    inward = scale * 0.018 * intensity_eff
+    upward = scale * 0.010 * intensity_eff
+    for i in jaw_ids:
+        x, y = landmarks[i][0], landmarks[i][1]
+        sign_x = 1.0 if x >= cx else -1.0          # +1 right side / -1 left side -> move toward centre
+        nx = x - sign_x * inward
+        ny = y - (upward * 1.4 if i in chin else upward)
+        dst[i] = (int(round(nx)), int(round(ny))) + tuple(landmarks[i][2:])
+
+    warped = apply_delaunay_warp(image_np, list(landmarks), dst)
+
+    # Confine the warp to the lower face with a feathered mask so cheeks/neck/background are
+    # untouched (the raw full-image delaunay warp was the source of the "çok bozuluyor" tearing).
+    zone_pts = np.array([landmarks[i] for i in jaw_ids] +
+                        [landmarks[i] for i in (61, 291, 0, 17) if i < n], np.int32)
+    mask = np.zeros((h, w), np.uint8)
+    cv2.fillConvexPoly(mask, cv2.convexHull(zone_pts), 255)
+    k = max(3, int(scale * 0.02)) | 1
+    mask = cv2.dilate(mask, np.ones((k, k), np.uint8), iterations=2)
+    mask = (cv2.GaussianBlur(mask, (0, 0), sigmaX=scale * 0.025).astype(np.float32) / 255.0)[:, :, None]
+    out = warped.astype(np.float32) * mask + image_np.astype(np.float32) * (1.0 - mask)
+    return np.clip(out, 0, 255).astype(np.uint8)
 

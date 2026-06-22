@@ -226,13 +226,19 @@ async def sam_guided_aging(
             if mode == "aging":
                 target_age = src_age + 8.0 + 40.0 * intensity
             else:
-                target_age = src_age - 6.0 - 28.0 * intensity
+                # Gentler de-aging: extreme targets (e.g. 33 -> 15) make SAM distort (forehead
+                # band, melted midface). Keep the delta modest and floor at a young-adult age.
+                target_age = max(18.0, src_age - (4.0 + 16.0 * intensity))
         else:
             # explicit (e.g. a UI age slider): cap how far from the source we go
             target_age = float(np.clip(target_age, src_age - 42.0, src_age + 42.0))
         target_age = float(np.clip(target_age, 15.0, 85.0))
 
-        result = apply_sam_aging(img, lms, target_age=target_age, intensity=intensity)
+        result = apply_sam_aging(img, lms, target_age=target_age, intensity=intensity,
+                                 gray_hair=(mode == "aging"),
+                                 # de-aged faces should be smooth, not sharpened; lower detail also
+                                 # slightly reduces SAM's forehead-band artifact
+                                 detail_amount=(0.9 if mode == "aging" else 0.4))
 
         return {
             "success": True,
