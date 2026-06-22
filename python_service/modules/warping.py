@@ -557,32 +557,48 @@ def resize_nose(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -
     flow_y = np.zeros((h, w), dtype=np.float32)
 
     # We map the intensity range [0, 1] to bulge/pinch strength k:
-    # 0.35 is neutral (original size, no warp)
-    # > 0.35: bulge (enlarge) -> k > 0
-    # < 0.35: pinch (shrink) -> k < 0
-    neutral_val = 0.35
+    # 0.50 is neutral (original size, no warp)
+    # > 0.50: bulge (enlarge) -> k > 0
+    # < 0.50: pinch (shrink) -> k < 0
+    neutral_val = 0.50
     if intensity_eff >= neutral_val:
         # bulge (nose widening/enlargement) up to +0.45
         k = 0.45 * (intensity_eff - neutral_val) / (1.0 - neutral_val)
     else:
-        # pinch (nose slimming) up to -0.35
-        raw_pinch = -0.35 * (neutral_val - intensity_eff) / neutral_val
-        taper = float(np.clip(intensity_eff * 5.0, 0.0, 1.0))
-        k = raw_pinch * taper
+        # pinch (nose slimming/shrinking) down to -0.35
+        k = -0.35 * (neutral_val - intensity_eff) / neutral_val
 
     print(f"[DEBUG NOSE] w={w}, h={h}, intensity={intensity_eff}, k={k}, len(lms)={len(landmarks)}")
 
-    if 1 < len(landmarks) and 2 < len(landmarks):
-        # Center of the nose tip/bottom
-        p_tip = np.array(landmarks[1], dtype=np.float32)
-        p_bottom = np.array(landmarks[2], dtype=np.float32)
+    if len(landmarks) > 0:
+        is_dlib = (len(landmarks) == 68)
+        if is_dlib:
+            # Dlib landmark indices:
+            # 30: Nose tip
+            # 33: Nose bottom center
+            # 39: Left eye inner corner
+            # 42: Right eye inner corner
+            p_tip = np.array(landmarks[30], dtype=np.float32)
+            p_bottom = np.array(landmarks[33], dtype=np.float32)
+            p_left_eye = np.array(landmarks[39], dtype=np.float32)
+            p_right_eye = np.array(landmarks[42], dtype=np.float32)
+        else:
+            # MediaPipe landmark indices:
+            # 4: Nose tip
+            # 2: Nose bottom center
+            # 133: Left eye inner corner
+            # 362: Right eye inner corner
+            tip_idx = 4 if 4 < len(landmarks) else 1
+            p_tip = np.array(landmarks[tip_idx], dtype=np.float32)
+            p_bottom = np.array(landmarks[2], dtype=np.float32) if 2 < len(landmarks) else p_tip
+            p_left_eye = np.array(landmarks[133], dtype=np.float32) if 133 < len(landmarks) else None
+            p_right_eye = np.array(landmarks[362], dtype=np.float32) if 362 < len(landmarks) else None
+
         cx = float((p_tip[0] + p_bottom[0]) / 2.0)
         cy = float((p_tip[1] + p_bottom[1]) / 2.0)
         
         # We estimate nose width based on eye corners if available
-        if 133 < len(landmarks) and 362 < len(landmarks):
-            p_left_eye = np.array(landmarks[133], dtype=np.float32)
-            p_right_eye = np.array(landmarks[362], dtype=np.float32)
+        if p_left_eye is not None and p_right_eye is not None:
             eye_distance = float(np.linalg.norm(p_left_eye - p_right_eye))
         else:
             eye_distance = float(min(h, w)) * 0.15

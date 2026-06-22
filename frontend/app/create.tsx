@@ -154,7 +154,6 @@ const PRO_OPERATIONS: ProOperation[] = [
   'slim_face',
   'enlarge_eyes',
   'sharpen_jaw',
-  'resize_nose',
   'aging',
   'deaging',
 ];
@@ -166,7 +165,6 @@ const PRO_LABEL: Record<ProOperation, string> = {
   slim_face: 'Slim Face',
   enlarge_eyes: 'Enlarge Eyes',
   sharpen_jaw: 'Sharpen Jaw',
-  resize_nose: 'Resize Nose',
   aging: 'Aging',
   deaging: 'De-Aging',
 };
@@ -504,7 +502,6 @@ export default function CreateScreen() {
     brow_lift: LAB_DEFAULT_INTENSITY,
     lip_plump: LAB_DEFAULT_INTENSITY,
     slim_face: LAB_DEFAULT_INTENSITY,
-    resize_nose: LAB_DEFAULT_INTENSITY,
     aging: 80,
     deaging: 80,
   });
