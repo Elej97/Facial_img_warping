@@ -358,6 +358,7 @@ def apply_sam_aging(
     detail_amount: float = 0.9,
     texture_amount: float = 0.0,  # disabled by default: injecting the ORIGINAL's high-freq onto
                                   # the (geometry-shifted) aged face ghosts eyes/nose on some images
+    gray_hair: bool = True,       # MUST be False for de-aging — graying makes a young result look OLD
 ) -> np.ndarray:
     import torch
     import torchvision.transforms as T
@@ -423,8 +424,9 @@ def apply_sam_aging(
     # 9. Orijinale yapıştır (1024px aged crop -> original)
     result = _paste_back(image_np, aged, M_inv, blend_mask)
 
-    # 10. Saç grileştirme — orijinal boyutta, alın üstünde kesin sınırlı
-    result = _gray_hair_on_original(result, landmarks)
+    # 10. Saç grileştirme — sadece YAŞLANDIRMADA. De-aging'de gri saç sonucu yaşlı gösterir.
+    if gray_hair:
+        result = _gray_hair_on_original(result, landmarks)
 
     # 11. Detay geri kazanımı (paste-back SONRASI): SAM'ın yumuşattığı keskinliği geri getir.
     result = _recover_detail_region(result, landmarks, amount=detail_amount)

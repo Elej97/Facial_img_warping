@@ -232,7 +232,8 @@ async def sam_guided_aging(
             target_age = float(np.clip(target_age, src_age - 42.0, src_age + 42.0))
         target_age = float(np.clip(target_age, 15.0, 85.0))
 
-        result = apply_sam_aging(img, lms, target_age=target_age, intensity=intensity)
+        result = apply_sam_aging(img, lms, target_age=target_age, intensity=intensity,
+                                 gray_hair=(mode == "aging"))
 
         return {
             "success": True,
