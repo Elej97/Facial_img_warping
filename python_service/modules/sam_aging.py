@@ -399,13 +399,16 @@ def apply_sam_aging(
     # 6. Maskeler
     color_mask = _build_face_mask(orig_lms_aligned)
     blend_mask = _build_blend_mask(orig_lms_aligned)
-    eye_excl   = _build_eye_exclusion(orig_lms_aligned)
-    mouth_excl = _build_mouth_nose_exclusion(orig_lms_aligned)
 
-    # Göz/gözlük + ağız/burun (SAM smear) bölgelerini blend maskesinden çıkar -> orijinalden gelsin
-    blend_mask = np.clip(
-        blend_mask.astype(np.int32) - eye_excl.astype(np.int32) - mouth_excl.astype(np.int32), 0, 255
-    ).astype(np.uint8)
+    # Eye + mouth/nose exclusions keep those regions from the ORIGINAL to hide SAM's AGING
+    # smear. For DE-AGING they instead paste adult features (beard, defined mouth, adult eyes)
+    # onto the smoothed young face -> mismatched dark blotches ("ek göz"). So only protect when aging.
+    if gray_hair:
+        eye_excl   = _build_eye_exclusion(orig_lms_aligned)
+        mouth_excl = _build_mouth_nose_exclusion(orig_lms_aligned)
+        blend_mask = np.clip(
+            blend_mask.astype(np.int32) - eye_excl.astype(np.int32) - mouth_excl.astype(np.int32), 0, 255
+        ).astype(np.uint8)
 
     # 7. Renk eşleştirme (1024px)
     aged = _match_color(aged, aligned, color_mask)
