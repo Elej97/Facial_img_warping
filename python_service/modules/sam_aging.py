@@ -420,8 +420,10 @@ def apply_sam_aging(
         sm = (color_mask.astype(np.float32) / 255.0)[:, :, None]
         aged = np.clip(aged.astype(np.float32) + hf * texture_amount * sm, 0, 255).astype(np.uint8)
 
-    # 8. Intensity blend (1024px)
-    if intensity < 1.0:
+    # 8. Intensity blend (1024px) — ONLY for aging. For de-aging this cross-fades the original
+    #    with a geometry-shifted young SAM face -> a ghost "double face" at 50%. De-aging instead
+    #    controls strength via the target age (see /aging/sam), and always uses the full SAM result.
+    if intensity < 1.0 and gray_hair:
         aged = cv2.addWeighted(aligned, 1.0 - intensity, aged, intensity, 0)
 
     # 9. Orijinale yapıştır (1024px aged crop -> original)
